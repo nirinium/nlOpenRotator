@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<title>wiring.md</title>
+	<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+
+	<style>
+		/* https://github.com/microsoft/vscode/blob/master/extensions/markdown-language-features/media/markdown.css */
+		/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+		body {
+			font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif);
+			font-size: var(--vscode-markdown-font-size, 14px);
+			padding: 0 26px;
+			line-height: var(--vscode-markdown-line-height, 22px);
+			word-wrap: break-word;
+		}
+
+		#code-csp-warning {
+			position: fixed;
+			top: 0;
+			right: 0;
+			color: white;
+			margin: 16px;
+			text-align: center;
+			font-size: 12px;
+			font-family: sans-serif;
+			background-color: #444444;
+			cursor: pointer;
+			padding: 6px;
+			box-shadow: 1px 1px 1px rgba(0, 0, 0, .25);
+		}
+
+		#code-csp-warning:hover {
+			text-decoration: none;
+			background-color: #007acc;
+			box-shadow: 2px 2px 2px rgba(0, 0, 0, .25);
+		}
+
+		body.scrollBeyondLastLine {
+			margin-bottom: calc(100vh - 22px);
+		}
+
+		body.showEditorSelection .code-line {
+			position: relative;
+		}
+
+		body.showEditorSelection .code-active-line:before,
+		body.showEditorSelection .code-line:hover:before {
+			content: "";
+			display: block;
+			position: absolute;
+			top: 0;
+			left: -12px;
+			height: 100%;
+		}
+
+		body.showEditorSelection li.code-active-line:before,
+		body.showEditorSelection li.code-line:hover:before {
+			left: -30px;
+		}
+
+		.vscode-light.showEditorSelection .code-active-line:before {
+			border-left: 3px solid rgba(0, 0, 0, 0.15);
+		}
+
+		.vscode-light.showEditorSelection .code-line:hover:before {
+			border-left: 3px solid rgba(0, 0, 0, 0.40);
+		}
+
+		.vscode-light.showEditorSelection .code-line .code-line:hover:before {
+			border-left: none;
+		}
+
+		.vscode-dark.showEditorSelection .code-active-line:before {
+			border-left: 3px solid rgba(255, 255, 255, 0.4);
+		}
+
+		.vscode-dark.showEditorSelection .code-line:hover:before {
+			border-left: 3px solid rgba(255, 255, 255, 0.60);
+		}
+
+		.vscode-dark.showEditorSelection .code-line .code-line:hover:before {
+			border-left: none;
+		}
+
+		.vscode-high-contrast.showEditorSelection .code-active-line:before {
+			border-left: 3px solid rgba(255, 160, 0, 0.7);
+		}
+
+		.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+			border-left: 3px solid rgba(255, 160, 0, 1);
+		}
+
+		.vscode-high-contrast.showEditorSelection .code-line .code-line:hover:before {
+			border-left: none;
+		}
+
+		img {
+			max-width: 100%;
+			max-height: 100%;
+		}
+
+		a {
+			text-decoration: none;
+		}
+
+		a:hover {
+			text-decoration: underline;
+		}
+
+		a:focus,
+		input:focus,
+		select:focus,
+		textarea:focus {
+			outline: 1px solid -webkit-focus-ring-color;
+			outline-offset: -1px;
+		}
+
+		hr {
+			border: 0;
+			height: 2px;
+			border-bottom: 2px solid;
+		}
+
+		h1 {
+			padding-bottom: 0.3em;
+			line-height: 1.2;
+			border-bottom-width: 1px;
+			border-bottom-style: solid;
+		}
+
+		h1,
+		h2,
+		h3 {
+			font-weight: normal;
+		}
+
+		table {
+			border-collapse: collapse;
+		}
+
+		table>thead>tr>th {
+			text-align: left;
+			border-bottom: 1px solid;
+		}
+
+		table>thead>tr>th,
+		table>thead>tr>td,
+		table>tbody>tr>th,
+		table>tbody>tr>td {
+			padding: 5px 10px;
+		}
+
+		table>tbody>tr+tr>td {
+			border-top: 1px solid;
+		}
+
+		blockquote {
+			margin: 0 7px 0 5px;
+			padding: 0 16px 0 10px;
+			border-left-width: 5px;
+			border-left-style: solid;
+		}
+
+		code {
+			font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+			font-size: 1em;
+			line-height: 1.357em;
+		}
+
+		body.wordWrap pre {
+			white-space: pre-wrap;
+		}
+
+		pre:not(.hljs),
+		pre.hljs code>div {
+			padding: 16px;
+			border-radius: 3px;
+			overflow: auto;
+		}
+
+		pre code {
+			color: var(--vscode-editor-foreground);
+			tab-size: 4;
+		}
+
+		/** Theming */
+
+		.vscode-light pre {
+			background-color: rgba(220, 220, 220, 0.4);
+		}
+
+		.vscode-dark pre {
+			background-color: rgba(10, 10, 10, 0.4);
+		}
+
+		.vscode-high-contrast pre {
+			background-color: rgb(0, 0, 0);
+		}
+
+		.vscode-high-contrast h1 {
+			border-color: rgb(0, 0, 0);
+		}
+
+		.vscode-light table>thead>tr>th {
+			border-color: rgba(0, 0, 0, 0.69);
+		}
+
+		.vscode-dark table>thead>tr>th {
+			border-color: rgba(255, 255, 255, 0.69);
+		}
+
+		.vscode-light h1,
+		.vscode-light hr,
+		.vscode-light table>tbody>tr+tr>td {
+			border-color: rgba(0, 0, 0, 0.18);
+		}
+
+		.vscode-dark h1,
+		.vscode-dark hr,
+		.vscode-dark table>tbody>tr+tr>td {
+			border-color: rgba(255, 255, 255, 0.18);
+		}
+	</style>
+
+	<style>
+		/* Tomorrow Theme */
+		/* http://jmblog.github.com/color-themes-for-google-code-highlightjs */
+		/* Original theme - https://github.com/chriskempson/tomorrow-theme */
+
+		/* Tomorrow Comment */
+		.hljs-comment,
+		.hljs-quote {
+			color: #8e908c;
+		}
+
+		/* Tomorrow Red */
+		.hljs-variable,
+		.hljs-template-variable,
+		.hljs-tag,
+		.hljs-name,
+		.hljs-selector-id,
+		.hljs-selector-class,
+		.hljs-regexp,
+		.hljs-deletion {
+			color: #c82829;
+		}
+
+		/* Tomorrow Orange */
+		.hljs-number,
+		.hljs-built_in,
+		.hljs-builtin-name,
+		.hljs-literal,
+		.hljs-type,
+		.hljs-params,
+		.hljs-meta,
+		.hljs-link {
+			color: #f5871f;
+		}
+
+		/* Tomorrow Yellow */
+		.hljs-attribute {
+			color: #eab700;
+		}
+
+		/* Tomorrow Green */
+		.hljs-string,
+		.hljs-symbol,
+		.hljs-bullet,
+		.hljs-addition {
+			color: #718c00;
+		}
+
+		/* Tomorrow Blue */
+		.hljs-title,
+		.hljs-section {
+			color: #4271ae;
+		}
+
+		/* Tomorrow Purple */
+		.hljs-keyword,
+		.hljs-selector-tag {
+			color: #8959a8;
+		}
+
+		.hljs {
+			display: block;
+			overflow-x: auto;
+			color: #4d4d4c;
+			padding: 0.5em;
+		}
+
+		.hljs-emphasis {
+			font-style: italic;
+		}
+
+		.hljs-strong {
+			font-weight: bold;
+		}
+	</style>
+
+	<style>
+		/*
+ * Markdown PDF CSS
+ */
+
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "Meiryo";
+			padding: 0 12px;
+		}
+
+		pre {
+			background-color: #f8f8f8;
+			border: 1px solid #cccccc;
+			border-radius: 3px;
+			overflow-x: auto;
+			white-space: pre-wrap;
+			overflow-wrap: break-word;
+		}
+
+		pre:not(.hljs) {
+			padding: 23px;
+			line-height: 19px;
+		}
+
+		blockquote {
+			background: rgba(127, 127, 127, 0.1);
+			border-color: rgba(0, 122, 204, 0.5);
+		}
+
+		.emoji {
+			height: 1.4em;
+		}
+
+		code {
+			font-size: 14px;
+			line-height: 19px;
+		}
+
+		/* for inline code */
+		:not(pre):not(.hljs)>code {
+			color: #C9AE75;
+			/* Change the old color so it seems less like an error */
+			font-size: inherit;
+		}
+
+		/* Page Break : use <div class="page"/> or <div class="page"></div> to insert page break
+-------------------------------------------------------- */
+		.page {
+			page-break-after: always;
+		}
+	</style>
+
+	<script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+</head>
+
+<body>
+	<script>
+		mermaid.initialize({
+			startOnLoad: true,
+			theme: document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast')
+				? 'dark'
+				: 'default'
+		});
+	</script>
+	<h1 id="nlopenrotator--full-wiring-guide-ac-rotator-3-wire">nlOpenRotator — Full Wiring Guide (AC Rotator, 3-wire)
+	</h1>
+	<p>Small RCA-style antenna rotators (VH-226, VH-100A, etc.) are driven by a
+		<strong>24 V AC single-phase motor with two separate windings</strong> — one for CW, one for CCW.
+		The original controller simply applies 24 V AC to one winding at a time.
+		This guide replaces that controller with an ESP32 + two relays + a small transformer.
+	</p>
+	<p>These rotators have <strong>3 motor terminals only</strong> (COM, CW, CCW).
+		There is no position potentiometer. Position is tracked by <strong>timed dead-reckoning</strong>:
+		calibrate how long (ms) the motor takes per degree, and the firmware times each move.</p>
+	<blockquote>
+		<p><strong>Safety first.</strong><br>
+			The transformer output is low-voltage AC (24 V) — not directly dangerous but
+			it can still arc, damage components, or start a fire if short-circuited.<br>
+			Keep the mains side of the transformer fully enclosed and fused.<br>
+			Never connect the transformer output directly to the ESP32.</p>
+	</blockquote>
+	<hr>
+	<h2 id="bill-of-materials">Bill of materials</h2>
+	<table>
+		<thead>
+			<tr>
+				<th>Qty</th>
+				<th>Part</th>
+				<th>Notes</th>
+			</tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td>1</td>
+				<td>ESP32 dev board</td>
+				<td>Any 30- or 38-pin board</td>
+			</tr>
+			<tr>
+				<td>1</td>
+				<td>Dual-secondary transformer</td>
+				<td>120 V primary; 24 V AC secondary (motor) + 9 V AC secondary (ESP32 power); e.g. original RCA controller transformer</td>
+			</tr>
+			<tr>
+				<td>1</td>
+				<td>SPST toggle switch (6 A 250 VAC)</td>
+				<td>Mains on/off — wired in series with primary Hot wire</td>
+			</tr>
+			<tr>
+				<td>4</td>
+				<td>1N4007 diodes (or 1× W005G bridge)</td>
+				<td>Full-wave bridge rectifier for 9 V AC → DC to power ESP32</td>
+			</tr>
+			<tr>
+				<td>1</td>
+				<td>1000 µF / 16 V electrolytic capacitor</td>
+				<td>Filter cap for rectified DC</td>
+			</tr>
+			<tr>
+				<td>1</td>
+				<td>MP1584 buck module</td>
+				<td>Steps ~11 V DC down to 5 V for the ESP32; adjust trimmer to 5.0 V before connecting</td>
+			</tr>
+			<tr>
+				<td>2</td>
+				<td>1-channel 5 V relay module</td>
+				<td>Optocoupler-isolated, active-LOW trigger — one module per winding (very common on Amazon/AliExpress)
+				</td>
+			</tr>
+			<tr>
+				<td>—</td>
+				<td>Hookup wire, connectors, enclosure</td>
+				<td>—</td>
+			</tr>
+		</tbody>
+	</table>
+	<hr>
+	<h2 id="transformer-wiring">Transformer wiring</h2>
+	<p>Your transformer has three sets of wires:</p>
+	<table>
+		<thead>
+			<tr>
+				<th>Wires</th>
+				<th>Voltage</th>
+				<th>Use</th>
+			</tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td>2-wire (Red + Black, from wall plug)</td>
+				<td>120 V AC</td>
+				<td>Primary (mains input)</td>
+			</tr>
+			<tr>
+				<td>2-wire</td>
+				<td>24 V AC</td>
+				<td>Motor relay supply</td>
+			</tr>
+			<tr>
+				<td>2-wire</td>
+				<td>9 V AC</td>
+				<td>ESP32 power supply (via MP1584)</td>
+			</tr>
+		</tbody>
+	</table>
+	<h3 id="primary-mains-switch-wiring">Primary — mains switch wiring</h3>
+	<p>Wire a SPST toggle switch in series with one primary wire:</p>
+	<pre class="hljs"><code><div>Wall plug
+  Red   ─────── Switch Prong 1 ── Switch Prong 2 ─────── Transformer Primary terminal A
+  Black ────────────────────────────────────────────────── Transformer Primary terminal B
+</div></code></pre>
+	<p>To identify Hot vs Neutral: check the plug — the <strong>narrow blade = Hot</strong>, <strong>wide blade = Neutral</strong>.
+		Trace which wire connects to each blade. If blades are the same width, use a multimeter on AC Volts,
+		probe one wire to ground — ~120 V = Hot, ~0 V = Neutral. Put the switch on <strong>Hot</strong>.</p>
+	<hr>
+	<h2 id="block-diagram">Block diagram</h2>
+	<pre class="hljs"><code><div>  WALL PLUG (120 V AC)
+  Hot   (Red)   ──[SPST Switch]──┐
+  Neutral (Black) ───────────────┤
+                        ┌────────┴──────────────────────┐
+                        │         TRANSFORMER            │
+                        │  Primary:     120 V            │
+                        │  Secondary A:  24 V AC ────────┼──► Motor relay supply
+                        │  Secondary B:   9 V AC ────────┼──► Bridge rect → MP1584 → 5 V → ESP32 VIN
+                        └───────────────────────────────-┘
+
+  24 V AC secondary:
+    Hot ──► Relay A COM ── NO ──► Motor CW terminal
+         └► Relay B COM ── NO ──► Motor CCW terminal
+    Neutral ─────────────────────────────────────────► Motor COM
+
+  9 V AC secondary:
+    ──► 4× 1N4007 bridge rectifier ──► 1000 µF cap ──► MP1584 input
+                                                        MP1584 out (5.0 V) ──► ESP32 VIN
+</div></code></pre>
+	<hr>
+	<h2 id="schematic--relay-module-wiring">Schematic — relay module wiring</h2>
+	<pre class="hljs"><code><div> ┌───────────────────────────────────────────────────────┐
+ │     RELAY MODULE A — CW  (5 V, active LOW)          │
+ │                                                       │
+ │  VCC ◄──── 5 V (from ESP32 5V/VIN pin)               │
+ │  GND ◄──── GND                                        │
+ │  IN  ◄──── GPIO 25  (LOW = relay energised)           │
+ │                                                       │
+ │  Relay: COM ── 24 V AC hot                           │
+ │         NO  ── Motor CW terminal                     │
+ │         NC  ── (leave unconnected)                   │
+ └───────────────────────────────────────────────────────┘
+
+ ┌───────────────────────────────────────────────────────┐
+ │     RELAY MODULE B — CCW  (5 V, active LOW)           │
+ │                                                       │
+ │  VCC ◄──── 5 V (from ESP32 5V/VIN pin)               │
+ │  GND ◄──── GND                                        │
+ │  IN  ◄──── GPIO 26  (LOW = relay energised)           │
+ │                                                       │
+ │  Relay: COM ── 24 V AC hot                           │
+ │         NO  ── Motor CCW terminal                    │
+ │         NC  ── (leave unconnected)                   │
+ └───────────────────────────────────────────────────────┘
+
+ Motor COM ─────────────────────────── 24 V AC neutral (transformer secondary A)
+</div></code></pre>
+	<blockquote>
+		<p>Most relay modules have <strong>active-LOW</strong> inputs — the relay energises when
+			the ESP32 pin is pulled LOW. The firmware handles this; see the note in
+			<code>main.cpp</code>.
+		</p>
+	</blockquote>
+	<hr>
+	<h2 id="rotator-cable-pinout-probe-with-a-multimeter--do-not-assume">Rotator cable pinout (probe with a multimeter —
+		do not assume)</h2>
+	<p>Typical 3-wire RCA rotator cable:</p>
+	<table>
+		<thead>
+			<tr>
+				<th>Wire colour (common)</th>
+				<th>Function</th>
+			</tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td>Red or White</td>
+				<td>Motor CW winding</td>
+			</tr>
+			<tr>
+				<td>Black or Blue</td>
+				<td>Motor CCW winding</td>
+			</tr>
+			<tr>
+				<td>Green or Yellow</td>
+				<td>Motor common (neutral)</td>
+			</tr>
+		</tbody>
+	</table>
+	<p><strong>Always verify with a meter before wiring.</strong> With the rotator unplugged:</p>
+	<ul>
+		<li>CW and CCW windings will read as a winding resistance (~50–200 Ω) to COM.</li>
+		<li>COM to either winding reads the same resistance. Measuring across CW→CCW reads double (series).</li>
+	</ul>
+	<hr>
+	<h2 id="firmware--timed-dead-reckoning">Firmware — timed dead-reckoning</h2>
+	<p>With no pot, position is inferred from motor run time. Key constants and commands:</p>
+	<pre class="hljs"><code><div><span class="hljs-comment">// In src/main.cpp — adjust to match your rotator</span>
+<span class="hljs-type">float</span> MS_PER_DEG = <span class="hljs-number">125.0f</span>;  <span class="hljs-comment">// ms per degree  (125 ≈ 45 s for a full 360°)</span>
+<span class="hljs-type">float</span> DEADBAND   = <span class="hljs-number">4.0f</span>;    <span class="hljs-comment">// stop within ±4° of target</span>
+</div></code></pre>
+	<h3 id="calibration-procedure">Calibration procedure</h3>
+	<ol>
+		<li>Flash the firmware. Open the serial monitor at <strong>115200 baud</strong>.</li>
+		<li>Point the antenna to a known bearing (e.g. North = 0°) by hand.</li>
+		<li>Send <code>SETHOME 0</code> — this sets the reference and enables GOTO.</li>
+		<li>Send <code>GOTO 90</code> and time how long the motor runs until it stops (note seconds).</li>
+		<li>Measure the actual angle turned with a compass or by observing a known landmark.</li>
+		<li><code>MS_PER_DEG = elapsed_ms / actual_degrees</code><br>
+			Example: motor ran 11.25 s (11250 ms) for 90° → MS_PER_DEG = 11250 / 90 = <strong>125</strong></li>
+		<li>Send <code>MSPERDEG 125</code> (or update the constant in <code>main.cpp</code> and reflash).</li>
+		<li>Send <code>SETHOME 0</code> again to reset after the test run.</li>
+	</ol>
+	<blockquote>
+		<p>Dead-reckoning accumulates error over multiple moves.<br>
+			Re-run <code>SETHOME</code> whenever you can visually confirm the antenna direction.</p>
+	</blockquote>
+	<h3 id="motor-control-functions-already-in-maincpp--for-reference">Motor control functions (already in main.cpp —
+		for reference)</h3>
+	<pre class="hljs"><code><div><span class="hljs-function"><span class="hljs-type">void</span> <span class="hljs-title">motorStop</span><span class="hljs-params">()</span>  </span>{ <span class="hljs-comment">/* captures heading from elapsed time, de-energises relays */</span> }
+<span class="hljs-function"><span class="hljs-type">void</span> <span class="hljs-title">motorCW</span><span class="hljs-params">()</span>    </span>{ <span class="hljs-comment">/* calls motorStop() first, then snapshots heading+time, energises CW relay */</span> }
+<span class="hljs-function"><span class="hljs-type">void</span> <span class="hljs-title">motorCCW</span><span class="hljs-params">()</span>   </span>{ <span class="hljs-comment">/* calls motorStop() first, then snapshots heading+time, energises CCW relay */</span> }
+</div></code></pre>
+	<hr>
+	<h2 id="complete-wiring-checklist">Complete wiring checklist</h2>
+	<ul>
+		<li><input type="checkbox" id="checkbox0"><label for="checkbox0">Transformer primary fused (original controller
+				already has this; if using a bare transformer, add a 0.5 A fuse)</label></li>
+		<li><input type="checkbox" id="checkbox1"><label for="checkbox1"><strong>Unplug the controller from the wall
+					before opening it</strong></label></li>
+		<li><input type="checkbox" id="checkbox2"><label for="checkbox2">Transformer secondary connected to relay COM
+				terminals only (not ESP32)</label></li>
+		<li><input type="checkbox" id="checkbox3"><label for="checkbox3">Motor COM wire connected to transformer
+				secondary neutral</label></li>
+		<li><input type="checkbox" id="checkbox4"><label for="checkbox4">Relay module VCC connected to ESP32 5 V (VIN)
+				pin, <strong>not</strong> 3.3 V</label></li>
+		<li><input type="checkbox" id="checkbox5"><label for="checkbox5">Relay module GND shared with ESP32 GND</label>
+		</li>
+		<li><input type="checkbox" id="checkbox6"><label for="checkbox6">IN1 → GPIO 25, IN2 → GPIO 26</label></li>
+		<li><input type="checkbox" id="checkbox7"><label for="checkbox7">ESP32 powered from MP1584 buck module (9 V AC
+				secondary → bridge rectifier → MP1584 → 5 V DC → ESP32 VIN), <strong>or</strong> USB</label></li>
+		<li><input type="checkbox" id="checkbox7b"><label for="checkbox7b">MP1584 output trimmer adjusted to <strong>5.0
+					V</strong> before connecting ESP32</label></li>
+		<li><input type="checkbox" id="checkbox8"><label for="checkbox8"><code>MS_PER_DEG</code> calibrated for your
+				rotator's speed (see Calibration above)</label></li>
+		<li><input type="checkbox" id="checkbox9"><label for="checkbox9"><code>SETHOME</code> sent after pointing
+				antenna to a known bearing on first use</label></li>
+	</ul>
+	<hr>
+	<h2 id="powering-the-esp32-from-the-9v-ac-secondary">Powering the ESP32 from the 9 V AC secondary (MP1584 buck
+		module)</h2>
+	<p>The original RCA controller has a <strong>9 V AC secondary</strong> tap (used for the indicator meter/lamp).
+		You can rectify this to power the ESP32, eliminating the need for a separate USB supply.</p>
+	<p><strong>MP1584 module specs:</strong> Input 4.5–28 V DC · Output adjustable · Up to 3 A<br>
+		The ESP32 draws ~250 mA average, well within rating.</p>
+	<h3 id="circuit">Circuit</h3>
+	<pre class="hljs"><code><div>9 V AC (transformer secondary tap)
+         │           │
+        [+]         [–]   ← polarity doesn't matter for AC input to bridge
+         │           │
+   ┌─────┴───────────┴─────┐
+   │    Bridge rectifier   │   4× 1N4007 diodes  (or a W005G / DB107 package)
+   │    (full-wave)        │
+   └─────┬───────────┬─────┘
+        DC+          DC–
+         │            │
+      [1000 µF]       │    ← electrolytic cap, 16 V or higher, + toward DC+
+      [16 V cap]      │      smooths rectified DC to ~11–12 V
+         │            │
+    IN+ ──┤            ├── IN–
+    │    MP1584 module     │
+    OUT+ ─┤            ├── OUT–
+         │            │
+       5 V DC        GND
+         │            │
+    ESP32 VIN (5V)  GND
+</div></code></pre>
+	<h3 id="step-by-step-psu">Step-by-step</h3>
+	<ol>
+		<li><strong>Rectify:</strong> Wire the four 1N4007 diodes as a full-wave bridge, or use a
+			single W005G/DB107 package. The two AC inputs go to the AC~ pins;
+			DC+ and DC− come out the other two pins.</li>
+		<li><strong>Filter:</strong> Solder a 1000 µF / 16 V electrolytic capacitor across DC+ and DC−,
+			observing polarity. This smooths the pulsed DC to a steady ~11–12 V.</li>
+		<li><strong>Adjust the MP1584:</strong> Before wiring to the ESP32, power it from a bench
+			supply (or temporarily from the rectifier) and adjust the trimmer pot until
+			the output reads <strong>5.0 V</strong> on a multimeter.</li>
+		<li><strong>Connect:</strong> Wire MP1584 OUT+ → ESP32 <strong>VIN</strong> pin (5 V),
+			MP1584 OUT− → ESP32 <strong>GND</strong>. Do <strong>not</strong> use the 3.3 V pin — always feed
+			regulated 5 V to VIN.</li>
+		<li><strong>Isolate:</strong> Keep all DC wiring clear of the 24 V AC relay circuit.
+			The two transformer secondaries share a common core but their outputs are
+			electrically independent — treat them as separate circuits.</li>
+	</ol>
+	<h3 id="bridge-rectifier-diode-wiring">Bridge rectifier diode wiring (1N4007)</h3>
+	<pre class="hljs"><code><div>        AC~              AC~
+  9V AC ─┤►├─ DC+ ──┬──────────── (+) to MP1584 IN+
+         │          │
+         │       [1000µF]
+         │          │
+  9V AC ─┤►├─ DC− ──┴──────────── (–) to MP1584 IN−  / GND
+</div></code></pre>
+	<p>A pre-made W005G or DB107 bridge rectifier package has four labelled legs
+		(AC~, AC~, +, −) and is simpler to solder.</p>
+	<blockquote>
+		<p><strong>Two things that will damage the ESP32 if wrong:</strong><br>
+			— Output voltage over ~6 V into VIN — set to 5.0 V first, every time.<br>
+			— Connecting to the <strong>3.3 V pin</strong> instead of <strong>VIN</strong> — the 3.3 V pin has no
+			regulator before it.</p>
+	</blockquote>
+	<hr>
+	<h2 id="using-the-original-rca-controller-box">Using the original RCA controller box</h2>
+	<p>If you have the original controller, you can reuse its built-in transformer
+		rather than buying a separate one. <strong>Unplug it from the wall before opening.</strong></p>
+	<h3 id="option-a--tap-the-transformer-secondary-recommended">Option A — tap the transformer secondary (recommended)
+	</h3>
+	<p>This is the cleanest approach. The original switch is bypassed entirely.</p>
+	<ol>
+		<li>Open the controller box (usually 2–4 Phillips screws on the base).</li>
+		<li>Locate the transformer — a small laminated-core block, usually bolted to the
+			chassis. It has two sets of wires:
+			<ul>
+				<li><strong>Primary</strong> (mains side) — thicker wires going to the mains cord and fuse.
+					<strong>Do not touch these.</strong>
+				</li>
+				<li><strong>Secondary</strong> (low-voltage AC side) — thinner wires, typically two, going
+					to the rotary switch or terminal strip. These carry ~24 V AC.</li>
+			</ul>
+		</li>
+		<li>Trace the secondary wires from the transformer to the switch/terminal strip.
+			Cut or unsolder them at the switch end, leaving as much wire length as
+			possible on the transformer side.</li>
+		<li>Run those two secondary wires out of the controller box (use a grommet or
+			strain relief through an existing hole or a small new hole in the side).</li>
+		<li>These become your <strong>24 V AC hot</strong> and <strong>24 V AC neutral</strong> supply for the
+			relay COM terminals.</li>
+	</ol>
+	<pre class="hljs"><code><div>Inside original controller box:
+  Mains cord ──► [Fuse] ──► Transformer primary
+                             Transformer secondary ──► (wires exit box)
+                                                           │
+                                          ┌────────────────┴─────────────────┐
+                                          ▼                                   ▼
+                                   Relay A COM                          Relay B COM
+                                   Relay A NO ──► Motor CW terminal
+                                   Relay B NO ──► Motor CCW terminal
+
+  Motor COM ──────────────────────────────────────────► Transformer secondary neutral
+</div></code></pre>
+	<ol start="6">
+		<li>The original switch, indicator lamp, and meter inside the controller can be
+			left disconnected — they are no longer in the circuit.</li>
+		<li>Drill or punch a second hole for the motor cable (or reuse the existing
+			cable entry if you are keeping the cable attached).</li>
+		<li>Power the ESP32 from USB; plug the original controller's mains cord back in
+			to power the transformer.</li>
+	</ol>
+	<h3 id="option-b--intercept-at-the-rotator-cable-connector-no-disassembly">Option B — intercept at the rotator cable
+		connector (no disassembly)</h3>
+	<p>If you would rather not open the controller:</p>
+	<ol>
+		<li>Unplug the rotator cable from the controller's output socket.</li>
+		<li>Identify the CW, CCW, and COM pins using a multimeter (see <em>Rotator cable
+				pinout</em> above).</li>
+		<li>Wire your relay NO contacts and neutral to a mating connector (or bare wire
+			directly) for those three pins.</li>
+		<li>Leave the original controller plugged into the wall — its transformer stays
+			live and the secondary feeds through the internal wiring to the output socket.</li>
+		<li>Set the original rotary switch to the centre/off position (if it has one)
+			so it doesn't apply voltage to the windings independently of the relays.</li>
+	</ol>
+	<blockquote>
+		<p><strong>Risk:</strong> if the original switch is accidentally moved to CW or CCW while
+			the ESP32 relay is also energised in the opposite direction, both windings
+			see voltage simultaneously. Option A avoids this entirely.</p>
+	</blockquote>
+	<hr>
+	<h2 id="optional-station-controller-integration">Optional: station-controller integration</h2>
+	<p>If you want the ESP32 to sit inside the original controller enclosure:</p>
+	<pre class="hljs"><code><div>Transformer 24 V AC secondary ─── relay contacts ─── motor cable connector
+Transformer  9 V AC secondary ─── bridge rectifier ─── MP1584 ─── ESP32 VIN
+
+All AC wiring kept on one side of the enclosure.
+ESP32 + relay signal wires on the other side.
+Use barrier strips (screw terminals) for all connections.
+</div></code></pre>
+	<p>Keep the 24 V AC wiring well-separated from the ESP32 and relay signal wires.</p>
+
+</body>
+
+</html>
