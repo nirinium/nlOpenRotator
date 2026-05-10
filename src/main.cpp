@@ -1,4 +1,4 @@
-// =============================================================================
+﻿// =============================================================================
 //  nlOpenRotator — ESP32 TV/RCA Antenna Rotator Controller
 //  Controls a small AC antenna rotator (e.g. RCA VH-226) via two relays
 //  and a 24 V AC transformer.  Position is tracked by timed dead-reckoning
@@ -14,14 +14,15 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ArduinoJson.h>
+#include <Preferences.h>
 
 // ─── Pin definitions ──────────────────────────────────────────────────────────
 //  Relay module wiring (2× 1-channel, 5 V, active-LOW, optocoupler-isolated):
 //    PIN_MOTOR_CW  → relay module IN1  (LOW = relay on = 24 V AC to CW winding)
 //    PIN_MOTOR_CCW → relay module IN2  (LOW = relay on = 24 V AC to CCW winding)
 //  Relay module VCC → ESP32 5 V (VIN).  Never energise both relays simultaneously.
-#define PIN_MOTOR_CW   25   // digital output → relay IN1 (active LOW)
-#define PIN_MOTOR_CCW  26   // digital output → relay IN2 (active LOW)
+#define PIN_MOTOR_CW   26   // digital output → relay IN1 (active LOW) — sweeps 0°→360°
+#define PIN_MOTOR_CCW  25   // digital output → relay IN2 (active LOW) — returns to 0°
 //  Optional status LED (built-in on most ESP32 devkits)
 #define PIN_LED         2
 
@@ -34,10 +35,18 @@ const char* AP_PASS = "rotator123";   // change to something stronger!
 //  then set MS_PER_DEG = elapsed_ms / degrees_turned.
 //  Example: rotator does a full 360° in 45 seconds → MS_PER_DEG = 45000/360 = 125
 //  Use the TIMECW / TIMECCW serial commands to measure this at runtime.
-float MS_PER_DEG   = 125.0f;  // milliseconds per degree of rotation (adjust to suit)
+float MS_PER_DEG   = 163.0f;  // milliseconds per degree of rotation — calibrated 2026-05-07 (58690ms/360deg)
 
 // ─── Tuning knobs ─────────────────────────────────────────────────────────────
 float DEADBAND     = 4.0f;    // Stop within ±N degrees of target (increase if overshooting)
+
+// ─── Physical limits (non-circular rotator has hard stops at both ends) ──────
+//  Set these after calibrating, e.g. SETMIN 0  SETMAX 360
+//  GOTO targets are clamped to [HDG_MIN, HDG_MAX]; heading never wraps.
+float HDG_MIN      = 0.0f;    // CCW hard stop — rotator cannot go below this
+float HDG_MAX      = 360.0f;  // CW  hard stop — rotator cannot go above this
+float HDG_OFFSET   = 0.0f;    // Compass mount offset: added to physical heading for display
+                               // e.g. 180 = physical 0° faces South; -90 = faces West
 
 // ─── Runtime state ────────────────────────────────────────────────────────────
 WebServer server(80);
@@ -49,6 +58,15 @@ int           motorDirection  = 0;      // 0=stopped, 1=CW, -1=CCW
 float         motorStartHdg   = 0.0f;  // heading when motor last started
 unsigned long motorStartMs    = 0;     // millis() when motor last started
 unsigned long lastControlMs   = 0;
+bool          timingMode      = false;   // true during TIMECW/TIMECCW calibration run
+unsigned long timingStartMs   = 0;       // millis() when timing started
+bool          freeRunMode     = false;   // true during manual CW/CCW/TIMECW/TIMECCW (no GOTO target)
+Preferences   prefs;                     // NVS storage for calibration + last heading
+bool          hdgRestored     = false;   // true if heading was loaded from NVS on boot
+String        staSSID         = "";       // home WiFi SSID (empty = STA disabled)
+String        staPass         = "";       // home WiFi password
+bool          staConnected    = false;    // true once STA link is up
+IPAddress     staIP;
 
 // =============================================================================
 //  Position tracking — timed dead-reckoning
@@ -58,7 +76,10 @@ void updateHeading() {
     if (motorDirection == 0) return;
     unsigned long elapsed = millis() - motorStartMs;
     float delta = (float)elapsed / MS_PER_DEG;
-    currentHeading = fmodf(motorStartHdg + (motorDirection * delta) + 360.0f, 360.0f);
+    // Clamp to physical limits — heading is linear, not circular
+    // CW (motorDirection=1) increases heading (0→360); CCW (motorDirection=-1) decreases it
+    float newHdg = motorStartHdg + (motorDirection * delta);
+    currentHeading = fmaxf(HDG_MIN, fminf(HDG_MAX, newHdg));
 }
 
 // =============================================================================
@@ -75,10 +96,12 @@ void motorStop() {
     motorStartHdg = currentHeading;     // keep snapshot current
     rotatorStatus = "IDLE";
     digitalWrite(PIN_LED, LOW);
+    if (headingKnown) prefs.putFloat("lastheading", currentHeading);  // survive reboots
 }
 
 void motorCW() {
     motorStop();                        // de-energise + capture heading first
+    delay(20);                          // interlock: ensure relay fully opens before re-energising
     motorStartHdg = currentHeading;
     motorStartMs  = millis();
     motorDirection = 1;
@@ -89,6 +112,7 @@ void motorCW() {
 
 void motorCCW() {
     motorStop();                        // de-energise + capture heading first
+    delay(20);                          // interlock: ensure relay fully opens before re-energising
     motorStartHdg = currentHeading;
     motorStartMs  = millis();
     motorDirection = -1;
@@ -103,25 +127,46 @@ void motorCCW() {
 void controlLoop() {
     updateHeading();  // refresh currentHeading from elapsed motor run time
 
+    // Physical limit guard — stop if heading has reached an end-stop
+    // CW increases heading → stop at HDG_MAX; CCW decreases heading → stop at HDG_MIN
+    // Skip ONLY during timingMode calibration runs where limits are intentionally bypassed
+    if (!timingMode) {
+        if (motorDirection == 1 && currentHeading >= HDG_MAX) {
+            motorStop();
+            freeRunMode   = false;
+            rotatorStatus = "LIMIT_HIT";
+            targetHeading = -1.0f;
+            Serial.println(F("WARN: CW limit reached — motor stopped."));
+            return;
+        }
+        if (motorDirection == -1 && currentHeading <= HDG_MIN) {
+            motorStop();
+            freeRunMode   = false;
+            rotatorStatus = "LIMIT_HIT";
+            targetHeading = -1.0f;
+            Serial.println(F("WARN: CCW limit reached — motor stopped."));
+            return;
+        }
+    }
+
     if (!headingKnown || targetHeading < 0.0f) {
-        // No known reference or no active target — ensure motor is stopped
-        if (motorDirection != 0) motorStop();
+        // No known reference or no active target — stop ONLY if not a free-run
+        if (motorDirection != 0 && !freeRunMode) motorStop();
         return;
     }
 
-    // Shortest-path angular error, normalised to -180 … +180
+    // Linear routing — rotator has physical end stops, no wrap-around
+    // Always travel directly toward the target on the available arc
     float error = targetHeading - currentHeading;
-    while (error >  180.0f) error -= 360.0f;
-    while (error < -180.0f) error += 360.0f;
 
     if (fabsf(error) <= DEADBAND) {
         motorStop();
         rotatorStatus = "AT_TARGET";
         targetHeading = -1.0f;          // arrived — clear target
     } else if (error > 0.0f) {
-        if (motorDirection != 1) motorCW();
+        if (motorDirection != 1) motorCW();    // CW increases heading
     } else {
-        if (motorDirection != -1) motorCCW();
+        if (motorDirection != -1) motorCCW();  // CCW decreases heading
     }
 }
 
@@ -139,50 +184,205 @@ void controlLoop() {
 String processCommand(const String& rawCmd) {
     String cmd = rawCmd;
     cmd.trim();
+    // Handle SETWIFI before uppercasing so SSID and password preserve their case
+    String cmdCheck = cmd;
+    cmdCheck.toUpperCase();
+    if (cmdCheck.startsWith("SETWIFI ")) {
+        String rest = cmd.substring(8);
+        rest.trim();
+        int sp = rest.indexOf(' ');
+        if (sp < 1) return "ERR Usage: SETWIFI <ssid> <password>";
+        String ssid = rest.substring(0, sp);
+        String pass = rest.substring(sp + 1);
+        ssid.trim(); pass.trim();
+        if (ssid.length() == 0) return "ERR SSID cannot be empty";
+        prefs.putString("wifissid", ssid);
+        prefs.putString("wifipass", pass);
+        staSSID = ssid; staPass = pass;
+        return "OK WiFi credentials saved. Reboot to connect to " + ssid;
+    }
     cmd.toUpperCase();
 
+    if (cmd == "CW") {
+        targetHeading = -1.0f;
+        freeRunMode   = true;
+        motorCW();
+        return "OK ROTATING_CW";
+    }
+    if (cmd == "CCW") {
+        targetHeading = -1.0f;
+        freeRunMode   = true;
+        motorCCW();
+        return "OK ROTATING_CCW";
+    }
+    if (cmd == "TIMECW") {
+        targetHeading = -1.0f;
+        freeRunMode   = true;
+        timingMode    = true;
+        timingStartMs = millis();
+        motorCW();
+        return "OK TIMING_CW - press STOP when done to see elapsed time";
+    }
+    if (cmd == "TIMECCW") {
+        targetHeading = -1.0f;
+        freeRunMode   = true;
+        timingMode    = true;
+        timingStartMs = millis();
+        motorCCW();
+        return "OK TIMING_CCW - press STOP when done to see elapsed time";
+    }
     if (cmd.startsWith("GOTO ")) {
         if (!headingKnown) return "ERR HEADING_UNKNOWN — run SETHOME first";
-        float deg = cmd.substring(5).toFloat();
-        deg = fmodf(deg + 360.0f, 360.0f);
+        // Input is a compass bearing; convert to physical heading by subtracting offset
+        float displayDeg = cmd.substring(5).toFloat();
+        float deg = fmodf(displayDeg - HDG_OFFSET + 360.0f, 360.0f);
+        deg = fmaxf(HDG_MIN, fminf(HDG_MAX, deg));  // clamp to physical limits
+        freeRunMode   = false;
         targetHeading = deg;
-        return "OK GOING_TO=" + String(deg, 1);
+        return "OK GOING_TO=" + String(displayDeg, 1) + " (physical=" + String(deg, 1) + ")";
     }
     if (cmd == "STOP") {
+        String resp = "OK STOPPED";
+        int prevDir = motorDirection;  // capture before motorStop() clears it
+        if (timingMode) {
+            unsigned long elapsed = millis() - timingStartMs;
+            timingMode = false;
+            float sweep = HDG_MAX - HDG_MIN;
+            resp += " | TIMED=" + String(elapsed) + "ms";
+            if (sweep > 0.0f)
+                resp += " (for " + String(sweep, 0) + "deg sweep set MSPERDEG " + String(elapsed / sweep, 1) + ")";
+        // Auto-home: CCW end stop = HDG_MIN (0°) — only set on CCW run
+        if (prevDir == -1) {
+            float homePos = HDG_MIN;
+            currentHeading = homePos;
+            motorStartHdg  = homePos;
+            headingKnown   = true;
+            hdgRestored    = false;
+            prefs.putFloat("lastheading", homePos);
+            prefs.putBool("hdgknown", true);
+            resp += " | HOME_AUTO=" + String(homePos, 0) + "deg";
+        }
+        }
+        freeRunMode   = false;
         targetHeading = -1.0f;
         motorStop();
-        return "OK STOPPED";
+        return resp;
     }
     if (cmd == "STATUS") {
-        String tgt = (targetHeading >= 0.0f) ? String(targetHeading, 1) : "NONE";
-        return "HDG=" + (headingKnown ? String(currentHeading, 1) : String("?")) +
+        auto toDisplay = [](float phys) {
+            return fmodf(phys + HDG_OFFSET + 360.0f, 360.0f);
+        };
+        String hdgStr = headingKnown ? String(toDisplay(currentHeading), 1) : String("?");
+        String tgt    = (targetHeading >= 0.0f) ? String(toDisplay(targetHeading), 1) : "NONE";
+        unsigned long runMs = (motorDirection != 0) ? (millis() - motorStartMs) : 0UL;
+        String cwStr  = digitalRead(PIN_MOTOR_CW)  == LOW ? "LOW" : "HIGH";
+        String ccwStr = digitalRead(PIN_MOTOR_CCW) == LOW ? "LOW" : "HIGH";
+        return "HDG=" + hdgStr +
                " TGT=" + tgt +
                " STS=" + rotatorStatus +
                " MS/DEG=" + String(MS_PER_DEG, 1) +
-               " DB=" + String(DEADBAND, 1);
+               " DB=" + String(DEADBAND, 1) +
+               " CW=" + cwStr + " CCW=" + ccwStr +
+               " RUNMS=" + String(runMs) +
+               " UP=" + String(millis()) +
+               " KNOWN=" + String(headingKnown ? 1 : 0) +
+               " TIMING=" + String(timingMode ? 1 : 0) +
+               " MIN=" + String(HDG_MIN, 1) +
+               " MAX=" + String(HDG_MAX, 1) +
+               " OFFSET=" + String(HDG_OFFSET, 1) +
+               " RESTORED=" + String(hdgRestored ? 1 : 0);
     }
     if (cmd.startsWith("SETHOME")) {
         float deg = 0.0f;
-        if (cmd.length() > 8) deg = fmodf(cmd.substring(8).toFloat() + 360.0f, 360.0f);
+        if (cmd.length() > 8) {
+            deg = cmd.substring(8).toFloat();
+            deg = fmaxf(HDG_MIN, fminf(HDG_MAX, deg));  // clamp to limits
+        }
         motorStop();
         currentHeading = deg;
         motorStartHdg  = deg;
         headingKnown   = true;
+        hdgRestored    = false;
+        prefs.putFloat("lastheading", deg);
+        prefs.putBool("hdgknown", true);
         return "OK HOME_SET=" + String(deg, 1);
     }
     if (cmd.startsWith("MSPERDEG ")) {
         float v = cmd.substring(9).toFloat();
         if (v <= 0.0f) return "ERR VALUE_MUST_BE_POSITIVE";
         MS_PER_DEG = v;
+        prefs.putFloat("msperdeg", MS_PER_DEG);
         return "OK MS_PER_DEG=" + String(MS_PER_DEG, 1);
     }
     if (cmd.startsWith("DEADBAND ")) {
         DEADBAND = max(0.5f, cmd.substring(9).toFloat());
         return "OK DEADBAND=" + String(DEADBAND, 1);
     }
+    if (cmd.startsWith("SETOFFSET ")) {
+        HDG_OFFSET = fmodf(cmd.substring(10).toFloat() + 360.0f, 360.0f);
+        prefs.putFloat("hdgoffset", HDG_OFFSET);
+        return "OK HDG_OFFSET=" + String(HDG_OFFSET, 1) + " (physical 0deg now displays as " + String(HDG_OFFSET, 0) + "deg)";
+    }
+    if (cmd.startsWith("SETMIN ")) {
+        HDG_MIN = cmd.substring(7).toFloat();
+        prefs.putFloat("hdgmin", HDG_MIN);
+        return "OK HDG_MIN=" + String(HDG_MIN, 1);
+    }
+    if (cmd.startsWith("SETMAX ")) {
+        HDG_MAX = cmd.substring(7).toFloat();
+        prefs.putFloat("hdgmax", HDG_MAX);
+        return "OK HDG_MAX=" + String(HDG_MAX, 1);
+    }
+    if (cmd == "FACTORY") {
+        prefs.clear();
+        MS_PER_DEG   = 163.0f;
+        HDG_MIN      = 0.0f;
+        HDG_MAX      = 360.0f;
+        HDG_OFFSET   = 0.0f;
+        DEADBAND     = 4.0f;
+        headingKnown = false;
+        hdgRestored  = false;
+        staSSID      = "";
+        staPass      = "";
+        motorStop();
+        return "OK FACTORY_RESET -- all calibration and WiFi credentials cleared. Run SETHOME to re-enable GOTO.";
+    }
+    // SETWIFI handled above (before toUpperCase)
+    if (cmd == "WIFICLEAR") {
+        prefs.remove("wifissid"); prefs.remove("wifipass");
+        staSSID = ""; staPass = "";
+        return "OK WiFi credentials cleared. Reboot to return to AP-only mode.";
+    }
+    if (cmd == "WIFISTATUS") {
+        String s = "AP IP=" + WiFi.softAPIP().toString();
+        if (staSSID.length() > 0) {
+            s += " | STA SSID=" + staSSID;
+            s += staConnected ? (" IP=" + staIP.toString()) : " DISCONNECTED";
+        } else {
+            s += " | STA disabled (use SETWIFI to enable)";
+        }
+        return s;
+    }
     if (cmd == "HELP") {
-        return "Commands: GOTO <deg> | STOP | STATUS | SETHOME [deg] | "
-               "MSPERDEG <val> | DEADBAND <deg> | HELP";
+        return "Commands: CW | CCW | TIMECW | TIMECCW | GOTO <deg> | STOP | STATUS | "
+               "SETHOME [deg] | MSPERDEG <val> | DEADBAND <deg> | "
+               "SETMIN <deg> | SETMAX <deg> | SETOFFSET <deg> | PINTEST | "
+               "SETWIFI <ssid> <pass> | WIFICLEAR | WIFISTATUS | FACTORY | HELP";
+    }
+    // PINTEST — pulse each output pin 2x so you can hear/see which relay fires
+    if (cmd == "PINTEST") {
+        motorStop();
+        Serial.println(F("PINTEST: pulsing GPIO25 (2x 300ms) ..."));
+        for (int i = 0; i < 2; i++) {
+            digitalWrite(25, LOW);  delay(300);
+            digitalWrite(25, HIGH); delay(300);
+        }
+        Serial.println(F("PINTEST: pulsing GPIO26 (2x 300ms) ..."));
+        for (int i = 0; i < 2; i++) {
+            digitalWrite(26, LOW);  delay(300);
+            digitalWrite(26, HIGH); delay(300);
+        }
+        return "PINTEST done — which relay clicked on GPIO25 vs GPIO26?";
     }
     return "ERR UNKNOWN_CMD (type HELP)";
 }
@@ -198,199 +398,550 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>OpenRotator</title>
 <style>
-:root{--accent:#4fc3f7;--bg:#0f0f1a;--card:#16213e;--text:#e0e0e0;--red:#ef5350}
+:root{
+  --p0:#000800;--p1:#001200;--p2:#002200;--p3:#003a00;--p4:#00660a;--p5:#00aa14;
+  --p6:#00dd1c;--p7:#44ff55;--am:#88ff99;--rd:#ff3300;--yw:#ccee00;--dim:#003300;
+  --scan:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.18) 2px,rgba(0,0,0,0.18) 4px);
+}
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--text);font-family:monospace;display:flex;
-  flex-direction:column;align-items:center;min-height:100vh;padding:16px 12px}
-h1{color:var(--accent);margin-bottom:16px;font-size:1.5rem;letter-spacing:3px;text-align:center}
-.card{background:var(--card);border-radius:12px;padding:18px;margin:8px 0;
-  width:100%;max-width:420px;box-shadow:0 4px 24px rgba(0,0,0,.5)}
-.compass-wrap{display:flex;justify-content:center;margin:4px 0 12px}
-canvas{cursor:crosshair}
-.stat{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #1e2d50}
+html,body{height:100%;overflow:hidden}
+body{background:var(--p0);color:var(--p6);font-family:'Courier New',monospace;font-size:12px;
+  display:flex;flex-direction:column;background-image:var(--scan);}
+#hdr{flex:none;background:var(--p1);padding:4px 10px;display:flex;align-items:center;
+  justify-content:space-between;border-bottom:2px solid var(--p3);
+  box-shadow:0 0 12px rgba(0,180,20,0.15),inset 0 -1px 0 var(--p4);}
+#hdr h1{color:var(--p6);font-size:12px;font-weight:normal;letter-spacing:3px;
+  text-shadow:0 0 8px var(--p5),0 0 20px rgba(0,200,20,0.3);text-transform:uppercase;}
+#hdr-right{display:flex;align-items:center;gap:10px}
+#hdr-time{color:var(--p7);font-size:12px;letter-spacing:2px;text-shadow:0 0 8px var(--p5);}
+#grid-ref{color:var(--p5);font-size:11px;letter-spacing:1px;border-left:1px solid var(--p3);padding-left:10px;}
+#rb{flex:none;background:#1a0000;border-bottom:2px solid var(--rd);color:var(--rd);
+  padding:3px 10px;font-size:10px;display:none;justify-content:space-between;align-items:center;
+  text-shadow:0 0 6px rgba(255,60,0,0.5);animation:rblink 1s step-end infinite;}
+@keyframes rblink{0%,100%{opacity:1}50%{opacity:.7}}
+#rb button{background:none;border:none;color:var(--rd);cursor:pointer;font-size:13px}
+#main{flex:1;display:flex;gap:4px;padding:4px;overflow:hidden;min-height:0}
+.pn{background:var(--p1);border:1px solid var(--p3);position:relative;
+  box-shadow:0 0 10px rgba(0,160,20,0.07),inset 0 0 30px rgba(0,0,0,0.4);
+  padding:6px;overflow:hidden;display:flex;flex-direction:column;}
+.pn::before,.pn::after{content:'';position:absolute;width:8px;height:8px;border-color:var(--p5);border-style:solid;pointer-events:none;}
+.pn::before{top:2px;left:2px;border-width:2px 0 0 2px}
+.pn::after{bottom:2px;right:2px;border-width:0 2px 2px 0}
+#pL{flex:none;width:192px}#pR{flex:1;min-width:0}
+canvas{display:block;margin:0 auto;cursor:crosshair}
+.rl-row{display:flex;gap:4px;margin-top:6px}
+.rl{flex:1;padding:3px 2px;text-align:center;font-size:11px;line-height:1.5;
+  background:var(--p0);border:1px solid var(--p3);color:var(--p5);text-transform:uppercase;letter-spacing:1px;}
+.rl.on{border-color:var(--rd);color:var(--rd);background:#0d0000;
+  box-shadow:0 0 6px rgba(255,50,0,0.3),inset 0 0 4px rgba(255,0,0,0.1);
+  text-shadow:0 0 6px var(--rd);animation:pulse-red .6s ease-in-out infinite alternate;}
+@keyframes pulse-red{from{opacity:.8}to{opacity:1}}
+.rl b{display:block;font-size:12px}
+.stat{display:flex;justify-content:space-between;align-items:center;padding:2px 0;border-bottom:1px solid var(--p2);font-size:12px}
 .stat:last-child{border:none}
-.stat span:last-child{color:var(--accent);font-weight:bold}
-.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.75rem;font-weight:bold}
-.IDLE,.AT_TARGET{background:#1b5e20;color:#a5d6a7}
-.ROTATING_CW,.ROTATING_CCW{background:#bf360c;color:#ffcc80}
-label{font-size:.8rem;color:#8899aa;margin-bottom:4px;display:block}
-input[type=number]{width:100%;padding:10px;border-radius:8px;border:1px solid #2a3a5e;
-  background:#0a1628;color:#fff;font-size:1.1rem;text-align:center;margin:6px 0 10px}
-.btn-row{display:flex;gap:10px;margin-top:4px}
-button{flex:1;padding:12px;border:none;border-radius:8px;font-size:.95rem;
-  cursor:pointer;font-family:monospace;font-weight:bold;transition:opacity .15s}
-button:hover{opacity:.8}
-#btnGoto{background:var(--accent);color:#000}
-#btnStop{background:var(--red);color:#fff}
-.log{background:#070710;border-radius:8px;padding:10px;height:130px;overflow-y:auto;
-  font-size:.75rem;color:#7a8fa8;margin-top:8px}
-.log p{margin:1px 0}
-.cmd-row{display:flex;gap:8px;margin-top:8px}
-.cmd-row input{flex:1;padding:9px 12px;border-radius:6px;border:1px solid #2a3a5e;
-  background:#0a1628;color:#fff;font-size:.9rem}
-.cmd-row button{flex:none;width:auto;padding:9px 18px;background:#4fc3f7;color:#000}
+.stat span:first-child{color:var(--p6);letter-spacing:1px;text-transform:uppercase}
+.sv{color:var(--p7);font-size:16px;letter-spacing:2px;
+  text-shadow:0 0 8px var(--p6),0 0 20px rgba(0,220,20,0.4);
+  background:var(--p0);padding:1px 5px;border:1px solid var(--p3);
+  min-width:58px;text-align:right;display:inline-block;
+  border-top-color:var(--p2);border-left-color:var(--p2);}
+.badge{padding:1px 8px;font-size:11px;font-weight:normal;letter-spacing:2px;text-transform:uppercase;border:1px solid;}
+.IDLE,.AT_TARGET{background:var(--p0);color:var(--p5);border-color:var(--p4);text-shadow:0 0 5px var(--p4);}
+.ROTATING_CW,.ROTATING_CCW{background:#0d0500;color:var(--yw);border-color:#667700;
+  text-shadow:0 0 5px var(--yw);animation:pulse-yw .5s ease-in-out infinite alternate;}
+@keyframes pulse-yw{from{opacity:.75}to{opacity:1}}
+.LIMIT_HIT{background:#0d0000;color:var(--rd);border-color:#660000;text-shadow:0 0 6px var(--rd);}
+.sec{font-size:11px;color:var(--p6);letter-spacing:3px;text-transform:uppercase;
+  margin:5px 0 3px;padding:2px 0;border-bottom:1px solid var(--p4);
+  display:flex;align-items:center;gap:6px;text-shadow:0 0 5px rgba(0,180,20,0.4);}
+.sec::before{content:'//';color:var(--p4)}
+input[type=number]{width:100%;padding:3px 5px;border:1px solid var(--p3);
+  border-top-color:var(--p2);border-left-color:var(--p2);
+  background:var(--p0);color:var(--p7);font-size:15px;font-family:'Courier New',monospace;
+  text-align:center;text-shadow:0 0 6px var(--p6);letter-spacing:2px;}
+input[type=number]:focus{outline:none;border-color:var(--p5);box-shadow:0 0 6px rgba(0,180,20,0.3)}
+.br{display:flex;gap:2px;margin-top:3px}
+button{flex:1;padding:5px 2px;border:1px solid var(--p4);background:var(--p1);color:var(--p6);
+  font-size:11px;letter-spacing:1px;text-transform:uppercase;cursor:pointer;
+  font-family:'Courier New',monospace;white-space:nowrap;transition:all .1s;}
+button:hover{background:var(--p2);color:var(--p7);border-color:var(--p6);
+  box-shadow:0 0 6px rgba(0,200,20,0.25);text-shadow:0 0 5px var(--p5);}
+button:active{background:var(--p3);color:var(--p7);box-shadow:inset 0 0 6px rgba(0,0,0,0.5);}
+#bGo{border-color:var(--p5);color:var(--p7);text-shadow:0 0 5px var(--p5)}
+#bGo:hover{background:var(--p3);box-shadow:0 0 8px rgba(0,220,20,0.4)}
+#bSt{border-color:var(--rd);color:var(--rd);text-shadow:0 0 5px var(--rd)}
+#bSt:hover{background:#180000;box-shadow:0 0 8px rgba(255,50,0,0.3)}
+#bHm{border-color:#4488cc;color:#66aaee;text-shadow:0 0 5px #4488cc}
+#bHm:hover{background:#001020;box-shadow:0 0 8px rgba(60,120,200,0.3)}
+#bCW,#bCC{border-color:var(--yw);color:var(--yw);text-shadow:0 0 4px var(--yw)}
+#bCW:hover,#bCC:hover{background:#0d0c00;box-shadow:0 0 8px rgba(180,200,0,0.3)}
+#bTC,#bTCC{border-color:#667700;color:#aacc00}
+#bTC:hover,#bTCC:hover{background:#080a00}
+.pre-row{display:grid;grid-template-columns:repeat(4,1fr);gap:2px;margin-top:3px}
+.pre{border:1px solid var(--p3);padding:2px;cursor:pointer;font-size:11px;
+  background:var(--p0);color:var(--p4);
+  min-height:28px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-transform:uppercase;letter-spacing:1px;}
+.ps{color:var(--p6);border-color:var(--p4);background:var(--p1);
+  flex-direction:row;justify-content:space-between;padding:2px 4px;}
+.ps:hover{border-color:var(--p6);box-shadow:0 0 4px rgba(0,180,20,0.2)}
+.ps .pd{text-align:left;line-height:1.3}
+.ps .pd b{display:block;color:var(--p7);font-size:10px;text-shadow:0 0 4px var(--p5)}
+.ps .pe{font-size:11px;color:var(--p3);cursor:pointer;padding:0 2px;flex:none}
+.ps .pe:hover{color:var(--yw)}
+#mapWrap{flex:none;overflow:hidden;position:relative;margin-bottom:3px;display:none;
+  border:1px solid var(--p3);box-shadow:0 0 8px rgba(0,160,20,0.1);}
+#mapWrap img{width:100%;height:auto;display:block;filter:sepia(0.2) saturate(0.7) brightness(0.75)}
+#mapCvs{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
+.dg{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px 6px}
+.di{padding:2px 0;border-bottom:1px solid var(--p2);font-size:11px;display:flex;justify-content:space-between;letter-spacing:.5px;}
+.di span:first-child{color:var(--p6);text-transform:uppercase}
+.dv{color:var(--p7);text-shadow:0 0 5px var(--p5)}
+.ok{color:var(--p7)!important;text-shadow:0 0 5px var(--p5)!important}
+.wn{color:var(--yw)!important;text-shadow:0 0 4px #888800!important}
+.er{color:var(--rd)!important;text-shadow:0 0 5px rgba(255,50,0,0.5)!important}
+#log{flex:1;background:var(--p0);border:1px solid var(--p3);
+  border-top-color:var(--p2);border-left-color:var(--p2);
+  padding:4px 5px;overflow-y:auto;font-size:11px;color:var(--p6);min-height:40px;
+  text-shadow:0 0 4px rgba(0,180,20,0.4);
+  background-image:var(--scan),linear-gradient(var(--p0),var(--p0));}
+#log p{margin:0;line-height:1.5}
+.cl{color:var(--am)}.er2{color:var(--rd);text-shadow:0 0 5px rgba(255,50,0,0.4)}
+#log p:last-child::after{content:'\25AE';animation:cur .8s step-end infinite;color:var(--p6)}
+@keyframes cur{0%,100%{opacity:1}50%{opacity:0}}
+.cr{display:flex;gap:2px;margin-top:3px;flex:none}
+.cr input{flex:1;padding:3px 5px;border:1px solid var(--p3);
+  border-top-color:var(--p2);border-left-color:var(--p2);
+  background:var(--p0);color:var(--am);font-size:11px;font-family:'Courier New',monospace;
+  text-shadow:0 0 4px rgba(100,255,120,0.3);letter-spacing:1px;}
+.cr input:focus{outline:none;border-color:var(--p5);box-shadow:0 0 6px rgba(0,180,20,0.3)}
+.cr input::placeholder{color:var(--p4)}
+.cr button{flex:none;padding:4px 10px;background:var(--p2);color:var(--p7);border:1px solid var(--p5);
+  cursor:pointer;font-size:11px;letter-spacing:2px;text-transform:uppercase;
+  font-family:'Courier New',monospace;text-shadow:0 0 5px var(--p5);}
+.cr button:hover{background:var(--p3);box-shadow:0 0 8px rgba(0,200,20,0.3)}
+.lbar{display:flex;justify-content:space-between;align-items:center;flex:none}
+.lb{padding:1px 7px;font-size:11px;background:var(--p1);color:var(--p6);border:1px solid var(--p4);
+  cursor:pointer;font-family:'Courier New',monospace;letter-spacing:1px;text-transform:uppercase;}
+.lb:hover{color:var(--p7);border-color:var(--p6);box-shadow:0 0 4px rgba(0,180,20,0.2)}
+#pmask{display:none;position:fixed;inset:0;background:rgba(0,8,0,0.82);z-index:999;
+  align-items:center;justify-content:center;}
+#pmask.vis{display:flex}
+#pmod{background:var(--p1);border:1px solid var(--p5);
+  box-shadow:0 0 24px rgba(0,200,20,0.35),inset 0 0 40px rgba(0,0,0,0.5);
+  padding:14px 16px;min-width:220px;position:relative;}
+#pmod .sec{margin-top:0;margin-bottom:8px;font-size:12px}
+#pmod label{display:block;color:var(--p6);font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px;margin-top:8px}
+#pmod input[type=text],#pmod input[type=number]{width:100%;padding:4px 6px;
+  border:1px solid var(--p3);border-top-color:var(--p2);border-left-color:var(--p2);
+  background:var(--p0);color:var(--p7);font-size:14px;font-family:'Courier New',monospace;letter-spacing:2px;}
+#pmod input:focus{outline:none;border-color:var(--p5);box-shadow:0 0 6px rgba(0,180,20,0.3)}
+.pmbr{display:flex;gap:4px;margin-top:12px}
+#pmOk{flex:1;background:var(--p2);color:var(--p7);border:1px solid var(--p5);font-size:11px;
+  padding:6px;letter-spacing:2px;text-transform:uppercase;cursor:pointer;
+  font-family:'Courier New',monospace;text-shadow:0 0 5px var(--p5);}
+#pmOk:hover{background:var(--p3);box-shadow:0 0 8px rgba(0,200,20,0.4)}
+#pmCn{flex:none;background:transparent;color:var(--rd);border:1px solid var(--rd);
+  font-size:11px;padding:6px 10px;letter-spacing:2px;text-transform:uppercase;
+  cursor:pointer;font-family:'Courier New',monospace;}
+#pmCn:hover{background:#180000}
+::-webkit-scrollbar{width:6px;background:var(--p0)}
+::-webkit-scrollbar-track{background:var(--p0);border-left:1px solid var(--p2)}
+::-webkit-scrollbar-thumb{background:var(--p3)}
+::-webkit-scrollbar-thumb:hover{background:var(--p4)}
 </style>
 </head>
 <body>
-<h1>&#x2316; OPEN ROTATOR</h1>
-
-<div class="card">
-  <div class="compass-wrap">
-    <canvas id="cmp" width="220" height="220" title="Click to set target heading"></canvas>
-  </div>
-  <div class="stat"><span>Heading</span><span id="hdg">---&deg;</span></div>
-  <div class="stat"><span>Target</span><span id="tgt">---&deg;</span></div>
-  <div class="stat"><span>Status</span><span id="sts"><span class="badge IDLE">IDLE</span></span></div>
-</div>
-
-<div class="card">
-  <label>Go to heading &mdash; type or click compass (0&ndash;359&deg;):</label>
-  <input type="number" id="ti" min="0" max="359" value="0">
-  <div class="btn-row">
-    <button id="btnGoto" onclick="sendGoto()">GOTO</button>
-    <button id="btnStop" onclick="sendStop()">STOP</button>
+<div id="hdr">
+  <h1>&#x2316;&nbsp; ANT-ROTATOR CTL &mdash; NL-01</h1>
+  <div id="hdr-right">
+    <span id="grid-ref">QTH: EM77EB &nbsp;|&nbsp; 38.032&deg;N 85.347&deg;W</span>
+    <span id="hdr-time">--:--:--Z</span>
+    <span id="sts2"><span class="badge IDLE">IDLE</span></span>
   </div>
 </div>
-
-<div class="card">
-  <label>Serial console</label>
-  <div class="log" id="log"></div>
-  <div class="cmd-row">
-    <input id="ci" placeholder="e.g. GOTO 180 | STATUS | HELP"
-           onkeydown="if(event.key==='Enter')sendCmd()">
-    <button onclick="sendCmd()">SEND</button>
+<div id="rb">
+  &#9888;&nbsp; [WARN] HEADING RESTORED FROM NVS &mdash; VERIFY ANTENNA POSITION BEFORE GOTO
+  <button onclick="dismissRb()">&#x2715;</button>
+</div>
+<div id="main">
+  <div class="pn" id="pL">
+    <canvas id="cmp" width="166" height="166" title="Click to set target"></canvas>
+    <div class="rl-row">
+      <div class="rl off" id="rA">CW<b id="rAs">OFF</b></div>
+      <div class="rl off" id="rB">CCW<b id="rBs">OFF</b></div>
+    </div>
+    <div style="margin-top:6px">
+      <div class="stat"><span>Heading</span><span class="sv" id="hdg">---&deg;</span></div>
+      <div class="stat"><span>Target</span><span class="sv" id="tgt">---&deg;</span></div>
+    </div>
+  </div>
+  <div class="pn" id="pR">
+    <div class="sec">Navigate</div>
+    <input type="number" id="ti" value="180" min="0" max="360">
+    <div class="br">
+      <button id="bGo" onclick="sendGotoVal(-1)">GOTO</button>
+      <button id="bSt" onclick="doStop()">STOP</button>
+      <button id="bHm" onclick="doSethome()">HOME</button>
+    </div>
+    <div class="br" style="margin-top:4px">
+      <button id="bCW"  onclick="doPost('/api/cw','CW')">&#9664;&nbsp;CW</button>
+      <button id="bCC"  onclick="doPost('/api/ccw','CCW')">CCW&nbsp;&#9654;</button>
+      <button id="bTC"  onclick="doPost('/api/timecw','TIMECW')">&#9201;&nbsp;T-CW</button>
+      <button id="bTCC" onclick="doPost('/api/timeccw','TIMECCW')">&#9201;&nbsp;T-CCW</button>
+    </div>
+    <div class="sec">Presets <span style="font-size:9px;letter-spacing:0;text-transform:none;color:var(--p3)">&nbsp;click=goto &nbsp;&#x270E;=edit</span></div>
+    <div class="pre-row" id="prs"></div>
+    <div class="sec" style="display:flex;align-items:center;justify-content:space-between;flex:none">
+      <span>Area Map</span>
+      <button class="lb" id="btnMapTog" onclick="toggleMap()">Show</button>
+    </div>
+    <div id="mapWrap">
+      <img id="mapImg" src="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox=-87.5%2C36.5%2C-83.2%2C40.0&bboxSR=4326&size=900%2C560&format=png&f=image"
+           alt="Taylorsville KY area" onload="drawMapOverlay()">
+      <canvas id="mapCvs"></canvas>
+    </div>
+    <div class="sec">Diagnostics</div>
+    <div class="dg">
+      <div class="di"><span>Runtime</span><span class="dv" id="dRt">0ms</span></div>
+      <div class="di"><span>Uptime</span><span class="dv" id="dUp">---</span></div>
+      <div class="di"><span>MS/Deg</span><span class="dv" id="dMd">---</span></div>
+      <div class="di"><span>Deadband</span><span class="dv" id="dDb">---</span></div>
+      <div class="di"><span>Known</span><span class="dv er" id="dKn">NO</span></div>
+      <div class="di"><span>Timing</span><span class="dv" id="dTm">OFF</span></div>
+      <div class="di"><span>Min</span><span class="dv" id="dMn">0&deg;</span></div>
+      <div class="di"><span>Max</span><span class="dv" id="dMx">360&deg;</span></div>
+    </div>
+    <div class="lbar" style="margin-top:5px">
+      <span class="sec" style="margin:0">// Console</span>
+      <button class="lb" onclick="cl()">CLR</button>
+    </div>
+    <div id="log"></div>
+    <div class="cr">
+      <input id="ci" placeholder="GOTO 180 | SETWIFI myssid mypass | FACTORY | HELP" onkeydown="ok(event)">
+      <button onclick="dc()">TX</button>
+    </div>
   </div>
 </div>
-
+<!-- Preset editor modal -->
+<div id="pmask">
+  <div id="pmod">
+    <div class="sec">// Edit Preset</div>
+    <label>Label (6 chars)</label>
+    <input type="text" id="pmLbl" maxlength="6" autocomplete="off">
+    <label>Heading (0&ndash;360&deg;)</label>
+    <input type="number" id="pmDeg" min="0" max="360">
+    <div class="pmbr">
+      <button id="pmOk" onclick="pmSave()">SAVE</button>
+      <button id="pmCn" onclick="pmClose()">CANCEL</button>
+    </div>
+  </div>
+</div>
 <script>
-const cvs=document.getElementById('cmp'),ctx=cvs.getContext('2d');
-const W=220,CX=110,CY=110,R=100;
-let heading=0,target=-1;
+const W=166,CX=83,CY=83,R=76;
+let heading=0,target=-1,hdgMin=0,hdgMax=360;
+let displayHeading=0,animId=null;
+let cmdHist=[],cmdIdx=-1,restoredDismissed=false;
+let mapOpen=false;
+// QTH: 847 Townhill Rd, Taylorsville KY 40071
+const MAP_LAT=38.0344609,MAP_LON=-85.3316739;
+const MAP_W=-87.5,MAP_E=-83.2,MAP_S=36.5,MAP_N=40.0;
+const MAP_CITIES=[
+  ['Louisville',38.2527,-85.7585],['Lexington',38.0406,-84.5037],
+  ['Frankfort',38.2009,-84.8733],['Cincinnati',39.1031,-84.5120],
+  ["E'town",37.6937,-85.8591],['Bardstown',37.8137,-85.4669],
+  ['Shelbyville',38.2115,-85.2238],['Lawrenceburg',38.037,-84.899],
+  ['Bowling Green',36.9903,-86.4436],['Indianapolis',39.7684,-86.1581],
+];
 
 function drawCompass(h,t){
-  ctx.clearRect(0,0,W,W);
-  // Outer ring
-  ctx.beginPath();ctx.arc(CX,CY,R,0,Math.PI*2);
-  ctx.fillStyle='#070710';ctx.fill();
-  ctx.strokeStyle='#223355';ctx.lineWidth=2;ctx.stroke();
-  // Tick marks
-  for(let i=0;i<72;i++){
-    const a=(i*5-90)*Math.PI/180;
-    const big=i%18===0,med=i%6===0;
-    const inner=big?78:med?82:87;
-    ctx.beginPath();
-    ctx.moveTo(CX+inner*Math.cos(a),CY+inner*Math.sin(a));
-    ctx.lineTo(CX+97*Math.cos(a),CY+97*Math.sin(a));
-    ctx.strokeStyle=big?'#4fc3f7':med?'#334466':'#1e2d50';
-    ctx.lineWidth=big?2:1;ctx.stroke();
+  const c=document.getElementById('cmp').getContext('2d');
+  c.clearRect(0,0,W,W);
+  c.beginPath();c.arc(CX,CY,R,0,Math.PI*2);
+  c.fillStyle='#000d00';c.fill();c.strokeStyle='#004000';c.lineWidth=2;c.stroke();
+  if(hdgMax-hdgMin<355){
+    const sa=((hdgMax-90+720)%360)*Math.PI/180,ea=((hdgMin-90+720)%360)*Math.PI/180;
+    c.beginPath();c.moveTo(CX,CY);c.arc(CX,CY,R-1,sa,ea);c.closePath();
+    c.fillStyle='rgba(0,10,0,.85)';c.fill();
+    [hdgMin,hdgMax].forEach(d=>{
+      const a=(d-90)*Math.PI/180;
+      c.beginPath();c.moveTo(CX+62*Math.cos(a),CY+62*Math.sin(a));
+      c.lineTo(CX+75*Math.cos(a),CY+75*Math.sin(a));
+      c.strokeStyle='#ccee00';c.lineWidth=3;c.stroke();
+    });
   }
-  // Cardinal labels
-  [['N',0,'#ef5350'],['E',90,'#aaa'],['S',180,'#aaa'],['W',270,'#aaa']].forEach(([l,d,c])=>{
-    const a=(d-90)*Math.PI/180;
-    ctx.fillStyle=c;ctx.font='bold 13px monospace';
-    ctx.textAlign='center';ctx.textBaseline='middle';
-    ctx.fillText(l,CX+68*Math.cos(a),CY+68*Math.sin(a));
+  if(t>=0&&Math.abs(h-t)>0.5){
+    const sA=(h-90)*Math.PI/180,eA=(t-90)*Math.PI/180;
+    c.beginPath();c.arc(CX,CY,70,sA,eA,t<h);
+    c.strokeStyle=t<h?'rgba(0,200,20,.45)':'rgba(0,160,20,.45)';
+    c.lineWidth=4;c.stroke();
+  }
+  for(let i=0;i<72;i++){
+    const a=(i*5-90)*Math.PI/180,big=i%18===0,med=i%6===0;
+    c.beginPath();
+    c.moveTo(CX+(big?57:med?61:64)*Math.cos(a),CY+(big?57:med?61:64)*Math.sin(a));
+    c.lineTo(CX+74*Math.cos(a),CY+74*Math.sin(a));
+    c.strokeStyle=big?'#00dd1c':med?'#005500':'#003300';c.lineWidth=big?2:1;c.stroke();
+  }
+  [['N',0,'#ff3300'],['E',90,'#005500'],['S',180,'#005500'],['W',270,'#005500']].forEach(([l,d,col])=>{
+    const a=(d-90)*Math.PI/180;c.fillStyle=col;c.font='bold 10px monospace';
+    c.textAlign='center';c.textBaseline='middle';
+    if(l==='N'){c.shadowColor='rgba(255,50,0,0.6)';c.shadowBlur=6;}
+    c.fillText(l,CX+48*Math.cos(a),CY+48*Math.sin(a));
+    c.shadowBlur=0;
   });
-  // Target line (if set)
   if(t>=0){
     const ta=(t-90)*Math.PI/180;
-    ctx.beginPath();
-    ctx.moveTo(CX,CY);
-    ctx.lineTo(CX+R*0.85*Math.cos(ta),CY+R*0.85*Math.sin(ta));
-    ctx.strokeStyle='rgba(255,200,0,0.5)';ctx.lineWidth=2;
-    ctx.setLineDash([4,4]);ctx.stroke();ctx.setLineDash([]);
+    c.beginPath();c.moveTo(CX,CY);
+    c.lineTo(CX+R*.78*Math.cos(ta),CY+R*.78*Math.sin(ta));
+    c.strokeStyle='rgba(180,220,0,.5)';c.lineWidth=2;c.setLineDash([3,3]);c.stroke();c.setLineDash([]);
   }
-  // Heading needle
   const na=(h-90)*Math.PI/180;
-  // Back (south) — white stub
-  ctx.beginPath();
-  ctx.moveTo(CX-22*Math.cos(na),CY-22*Math.sin(na));
-  ctx.lineTo(CX,CY);
-  ctx.strokeStyle='#888';ctx.lineWidth=3;ctx.stroke();
-  // Forward (red)
-  ctx.beginPath();
-  ctx.moveTo(CX,CY);
-  ctx.lineTo(CX+78*Math.cos(na),CY+78*Math.sin(na));
-  ctx.strokeStyle='#ef5350';ctx.lineWidth=3;ctx.stroke();
-  // Hub
-  ctx.beginPath();ctx.arc(CX,CY,6,0,Math.PI*2);
-  ctx.fillStyle='#4fc3f7';ctx.fill();
-  // Degree text
-  ctx.fillStyle='#fff';ctx.font='bold 15px monospace';
-  ctx.textAlign='center';ctx.textBaseline='middle';
-  ctx.fillText(Math.round(h)+'°',CX,CY+28);
+  c.beginPath();c.moveTo(CX-15*Math.cos(na),CY-15*Math.sin(na));c.lineTo(CX,CY);
+  c.strokeStyle='#003a00';c.lineWidth=3;c.stroke();
+  c.beginPath();c.moveTo(CX,CY);c.lineTo(CX+58*Math.cos(na),CY+58*Math.sin(na));
+  c.strokeStyle='#00ff1e';c.lineWidth=3;
+  c.shadowColor='rgba(0,255,30,0.6)';c.shadowBlur=8;c.stroke();c.shadowBlur=0;
+  c.beginPath();c.arc(CX,CY,5,0,Math.PI*2);c.fillStyle='#00dd1c';c.fill();
+  c.fillStyle='#44ff55';c.font='bold 12px monospace';
+  c.textAlign='center';c.textBaseline='middle';
+  c.shadowColor='rgba(0,220,20,0.5)';c.shadowBlur=6;
+  c.fillText(Math.round(h)+'\u00b0',CX,CY+20);
+  c.shadowBlur=0;
 }
-
-// Click on canvas → set target
-cvs.addEventListener('click',e=>{
-  const rect=cvs.getBoundingClientRect();
-  const dx=e.clientX-rect.left-CX*(rect.width/W);
-  const dy=e.clientY-rect.top -CY*(rect.height/W);
-  let deg=Math.atan2(dy,dx)*180/Math.PI+90;
+function startAnim(){
+  if(animId)return;
+  function step(){
+    const d=heading-displayHeading;
+    if(Math.abs(d)>90){displayHeading=heading;drawCompass(displayHeading,target);drawMapOverlay();animId=null;return;}
+    if(Math.abs(d)>0.2){displayHeading+=d*.14;drawCompass(displayHeading,target);animId=requestAnimationFrame(step);}
+    else{displayHeading=heading;drawCompass(displayHeading,target);drawMapOverlay();animId=null;}
+  }
+  animId=requestAnimationFrame(step);
+}
+document.getElementById('cmp').addEventListener('click',e=>{
+  const rect=e.target.getBoundingClientRect(),sc=rect.width/W;
+  let deg=Math.atan2(e.clientY-rect.top-CY*sc,e.clientX-rect.left-CX*sc)*180/Math.PI+90;
   if(deg<0)deg+=360;
-  deg=Math.round(deg)%360;
-  document.getElementById('ti').value=deg;
-  sendGotoVal(deg);
+  deg=Math.min(hdgMax,Math.max(hdgMin,Math.round(deg)%360));
+  document.getElementById('ti').value=deg;sendGotoVal(deg);
 });
 
-function log(msg){
-  const el=document.getElementById('log');
-  const p=document.createElement('p');
-  p.textContent=new Date().toLocaleTimeString()+' > '+msg;
-  el.appendChild(p);el.scrollTop=el.scrollHeight;
-  if(el.children.length>60)el.removeChild(el.firstChild);
+// Presets
+const NP=4;
+function lps(){try{return JSON.parse(localStorage.getItem('rtp')||'[]');}catch{return [];}}
+function sps(a){localStorage.setItem('rtp',JSON.stringify(a));}
+function rndPre(){
+  const ps=lps(),el=document.getElementById('prs');el.innerHTML='';
+  for(let i=0;i<NP;i++){
+    const p=ps[i],d=document.createElement('div');
+    if(p){
+      d.className='pre ps';
+      d.innerHTML='<span class="pd" onclick="gtp('+i+')">'+p.l+'<b>'+p.d+'\u00b0</b></span>'
+                 +'<span class="pe" onclick="stp('+i+')" title="Edit">&#x270E;</span>';
+    }else{
+      d.className='pre';
+      d.innerHTML='<span style="color:var(--p4);text-align:center" onclick="stp('+i+')">'
+                 +'P'+(i+1)+'<b style="display:block;color:#1e2d40;font-size:.7rem">+</b></span>';
+    }
+    el.appendChild(d);
+  }
+}
+function gtp(i){const ps=lps();if(ps[i])sendGotoVal(ps[i].d);}
+function stp(i){
+  const ps=lps(),cur=ps[i];
+  const dv=parseFloat(document.getElementById('ti').value);
+  document.getElementById('pmLbl').value=cur?cur.l:'P'+(i+1);
+  document.getElementById('pmDeg').value=isNaN(dv)?(cur?cur.d:0):Math.round(dv);
+  document.getElementById('pmask')._slot=i;
+  document.getElementById('pmask').classList.add('vis');
+  setTimeout(()=>document.getElementById('pmLbl').select(),50);
+}
+function pmClose(){document.getElementById('pmask').classList.remove('vis');}
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape')pmClose();
+  if(e.key==='Enter'&&document.getElementById('pmask').classList.contains('vis')){e.preventDefault();pmSave();}
+});
+function pmSave(){
+  const i=document.getElementById('pmask')._slot;
+  const ps=lps();
+  const nl=document.getElementById('pmLbl').value.trim().slice(0,6)||('P'+(i+1));
+  const nd=parseInt(document.getElementById('pmDeg').value)||0;
+  ps[i]={l:nl,d:nd};
+  sps(ps);rndPre();pmClose();
+  lg('PRESET '+(i+1)+' SAVED \u2192 '+nl+' / '+nd+'\u00b0','cl');
+  const slots=document.querySelectorAll('#prs .pre');
+  if(slots[i]){
+    slots[i].style.boxShadow='0 0 8px 2px rgba(0,220,20,0.7)';
+    slots[i].style.borderColor='var(--p7)';
+    setTimeout(()=>{slots[i].style.boxShadow='';slots[i].style.borderColor='';},1200);
+  }
 }
 
+// Map
+function ll2px(lat,lon,W,H){
+  return[(lon-MAP_W)/(MAP_E-MAP_W)*W,(MAP_N-lat)/(MAP_N-MAP_S)*H];}
+function distMi(a,b,c,d){
+  const R=3958.8,dL=(c-a)*Math.PI/180,dG=(d-b)*Math.PI/180;
+  const x=Math.sin(dL/2)**2+Math.cos(a*Math.PI/180)*Math.cos(c*Math.PI/180)*Math.sin(dG/2)**2;
+  return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));}
+function bearingDeg(la1,lo1,la2,lo2){
+  const r=Math.PI/180,dL=(lo2-lo1)*r;
+  const x=Math.sin(dL)*Math.cos(la2*r);
+  const y=Math.cos(la1*r)*Math.sin(la2*r)-Math.sin(la1*r)*Math.cos(la2*r)*Math.cos(dL);
+  return(Math.atan2(x,y)*180/Math.PI+360)%360;}
+function drawMapOverlay(){
+  if(!mapOpen)return;
+  const img=document.getElementById('mapImg'),cvs=document.getElementById('mapCvs');
+  if(!img||!cvs||!img.complete||!img.naturalWidth)return;
+  const W=img.offsetWidth,H=img.offsetHeight;if(!W||!H)return;
+  cvs.width=W;cvs.height=H;
+  const c=cvs.getContext('2d');
+  c.clearRect(0,0,W,H);
+  const[hx,hy]=ll2px(MAP_LAT,MAP_LON,W,H);
+  const pxMi=H/(MAP_N-MAP_S)/69.0;
+  [50,100,150,200].forEach(mi=>{
+    const r=mi*pxMi;
+    c.beginPath();c.arc(hx,hy,r,0,Math.PI*2);
+    c.strokeStyle='rgba(0,200,20,0.35)';c.lineWidth=1;c.setLineDash([5,4]);c.stroke();c.setLineDash([]);
+    const rx=hx+r*0.707,ry=hy-r*0.707;
+    c.lineWidth=2;c.strokeStyle='rgba(0,0,0,0.7)';
+    c.font='bold 9px monospace';c.textAlign='left';c.textBaseline='middle';
+    c.strokeText(mi+'mi',rx+1,ry+1);
+    c.fillStyle='rgba(0,220,20,0.9)';c.shadowColor='rgba(0,200,20,0.5)';c.shadowBlur=3;
+    c.fillText(mi+'mi',rx,ry);c.shadowBlur=0;
+  });
+  MAP_CITIES.forEach(([name,lat,lon])=>{
+    const[cx,cy]=ll2px(lat,lon,W,H);
+    const d=distMi(MAP_LAT,MAP_LON,lat,lon).toFixed(0)+'mi';
+    const brg=bearingDeg(MAP_LAT,MAP_LON,lat,lon).toFixed(0)+'\u00b0';
+    c.beginPath();c.arc(cx,cy,4,0,Math.PI*2);
+    c.fillStyle='#00dd1c';c.fill();c.strokeStyle='#000d00';c.lineWidth=1.5;c.stroke();
+    c.font='bold 10px monospace';c.textAlign='left';c.textBaseline='bottom';
+    c.lineWidth=3;c.strokeStyle='rgba(0,0,0,0.85)';
+    c.strokeText(name,cx+6,cy);c.fillStyle='#44ff55';c.fillText(name,cx+6,cy);
+    c.font='9px monospace';c.lineWidth=2;
+    c.strokeText(brg+' / '+d,cx+6,cy+11);c.fillStyle='#ccee00';c.fillText(brg+' / '+d,cx+6,cy+11);
+  });
+  const rad=displayHeading*Math.PI/180,blen=Math.hypot(W,H);
+  c.beginPath();c.moveTo(hx,hy);c.lineTo(hx+blen*Math.sin(rad),hy-blen*Math.cos(rad));
+  c.strokeStyle='rgba(0,255,30,0.85)';c.lineWidth=2;c.setLineDash([]);c.stroke();
+  const lx=hx+45*Math.sin(rad),ly=hy-45*Math.cos(rad);
+  c.font='bold 12px monospace';c.textAlign='center';c.textBaseline='middle';
+  c.lineWidth=3;c.strokeStyle='rgba(0,0,0,0.9)';
+  const ht=Math.round(displayHeading)+'\u00b0';
+  c.strokeText(ht,lx,ly);
+  c.fillStyle='#00ff1e';c.shadowColor='rgba(0,255,30,0.5)';c.shadowBlur=5;
+  c.fillText(ht,lx,ly);c.shadowBlur=0;
+  c.beginPath();c.arc(hx,hy,7,0,Math.PI*2);
+  c.fillStyle='#00dd1c';c.fill();c.strokeStyle='#44ff55';c.lineWidth=2;c.stroke();
+  c.beginPath();c.moveTo(hx-13,hy);c.lineTo(hx+13,hy);c.moveTo(hx,hy-13);c.lineTo(hx,hy+13);
+  c.strokeStyle='rgba(0,200,20,0.6)';c.lineWidth=1;c.stroke();
+  c.font='bold 10px monospace';c.textAlign='center';c.textBaseline='bottom';
+  c.lineWidth=2;c.strokeStyle='rgba(0,0,0,0.7)';
+  c.strokeText('N',hx,hy-16);c.fillStyle='#ff3300';c.fillText('N',hx,hy-16);
+}
+function toggleMap(){
+  mapOpen=!mapOpen;
+  document.getElementById('mapWrap').style.display=mapOpen?'block':'none';
+  document.getElementById('btnMapTog').textContent=mapOpen?'Hide':'Show';
+  if(mapOpen)setTimeout(drawMapOverlay,60);
+}
+function dismissRb(){restoredDismissed=true;document.getElementById('rb').style.display='none';}
+function lg(msg,cls){
+  const el=document.getElementById('log'),p=document.createElement('p');
+  if(cls)p.className=cls;
+  const t=new Date();
+  const ts=String(t.getUTCHours()).padStart(2,'0')+String(t.getUTCMinutes()).padStart(2,'0')+'Z';
+  p.textContent=ts+' > '+msg;
+  el.appendChild(p);el.scrollTop=el.scrollHeight;
+  if(el.children.length>80)el.removeChild(el.firstChild);
+}
+function cl(){document.getElementById('log').innerHTML='';}
+function fMs(ms){if(!ms||ms<=0)return '0ms';if(ms<1000)return ms+'ms';if(ms<60000)return(ms/1000).toFixed(1)+'s';return Math.floor(ms/60000)+'m'+(Math.floor(ms/1000)%60)+'s';}
+function fUp(ms){const s=Math.floor(ms/1000),h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sc=s%60;return(h?h+'h ':'')+( m?m+'m ':'')+sc+'s';}
+function updDbg(d){
+  const cOn=d.pinCW===0,ccOn=d.pinCCW===0;
+  document.getElementById('rA').className='rl '+(cOn?'on':'off');
+  document.getElementById('rAs').textContent=cOn?'ON':'OFF';
+  document.getElementById('rB').className='rl '+(ccOn?'on':'off');
+  document.getElementById('rBs').textContent=ccOn?'ON':'OFF';
+  document.getElementById('dRt').textContent=fMs(d.motorRunMs||0);
+  document.getElementById('dUp').textContent=fUp(d.uptime||0);
+  document.getElementById('dMd').textContent=(d.msperdeg||0).toFixed(1);
+  document.getElementById('dDb').textContent=(d.deadband||0).toFixed(1)+'\u00b0';
+  const kEl=document.getElementById('dKn');kEl.textContent=d.headingKnown?'YES':'NO';kEl.className='dv '+(d.headingKnown?'ok':'er');
+  const tEl=document.getElementById('dTm');tEl.textContent=d.timingMode?'ON':'OFF';tEl.className='dv '+(d.timingMode?'wn':'');
+  if(d.hdgMin!==undefined){
+    hdgMin=parseFloat(d.hdgMin);hdgMax=parseFloat(d.hdgMax);
+    document.getElementById('dMn').textContent=hdgMin.toFixed(0)+'\u00b0';
+    document.getElementById('dMx').textContent=hdgMax.toFixed(0)+'\u00b0';
+    document.getElementById('ti').min=hdgMin;document.getElementById('ti').max=hdgMax;
+  }
+  const rb=document.getElementById('rb');
+  if(d.hdgRestored&&!restoredDismissed)rb.style.display='flex';
+  else if(!d.hdgRestored){restoredDismissed=false;rb.style.display='none';}
+}
+function ok(e){
+  if(e.key==='Enter'){dc();return;}
+  if(e.key==='ArrowUp'){if(!cmdHist.length)return;cmdIdx=Math.min(cmdIdx+1,cmdHist.length-1);document.getElementById('ci').value=cmdHist[cmdIdx];e.preventDefault();}
+  if(e.key==='ArrowDown'){cmdIdx=Math.max(cmdIdx-1,-1);document.getElementById('ci').value=cmdIdx<0?'':cmdHist[cmdIdx];e.preventDefault();}
+}
+async function api(url,method,body){
+  const o={method:method||'GET'};
+  if(body){o.headers={'Content-Type':'application/json'};o.body=JSON.stringify(body);}
+  return(await fetch(url,o)).json();
+}
 async function pollStatus(){
   try{
-    const r=await fetch('/api/status');
-    const d=await r.json();
-    heading=d.heading;target=d.target;
-    drawCompass(d.heading,d.target);
-    document.getElementById('hdg').textContent=d.heading.toFixed(1)+'°';
-    document.getElementById('tgt').textContent=d.target>=0?d.target.toFixed(1)+'°':'---°';
-    const sb=document.getElementById('sts');
-    sb.innerHTML='<span class="badge '+d.status+'">'+d.status+'</span>';
+    const d=await api('/api/status');
+    const hv=d.headingKnown?parseFloat(d.heading):heading;
+    if(!isNaN(hv))heading=hv;
+    target=parseFloat(d.target);startAnim();
+    document.getElementById('hdg').textContent=d.headingKnown?hv.toFixed(1)+'\u00b0':'---\u00b0';
+    document.getElementById('tgt').textContent=target>=0?target.toFixed(1)+'\u00b0':'---\u00b0';
+    const st=d.status||'IDLE';
+    document.getElementById('sts2').innerHTML='<span class="badge '+st+'">'+st+'</span>';
+    updDbg(d);
   }catch(e){}
 }
-
 async function sendGotoVal(deg){
-  const r=await fetch('/api/goto',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({heading:deg})});
-  const d=await r.json();
-  log('GOTO '+deg+'° → '+d.result);
+  if(deg<0){deg=parseFloat(document.getElementById('ti').value);if(isNaN(deg))return;}
+  deg=Math.round(Math.min(hdgMax,Math.max(hdgMin,deg)));
+  try{const d=await api('/api/goto','POST',{heading:deg});lg('GOTO '+deg+'\u00b0 \u2192 '+d.result,'cl');}
+  catch(e){lg('GOTO error','er2');}
 }
-
-async function sendGoto(){
-  const deg=parseFloat(document.getElementById('ti').value);
-  if(isNaN(deg)||deg<0||deg>=360){alert('Enter 0–359');return;}
-  sendGotoVal(Math.round(deg));
+async function doStop(){
+  try{
+    const d=await api('/api/stop','POST');
+    let msg='STOP \u2192 '+d.result;
+    if(d.timedMs)msg+=' | '+d.timedMs+'ms for '+d.sweepDeg+'\u00b0 \u2192 MSPERDEG '+d.suggestedMsDeg;
+    lg(msg,'cl');
+  }catch(e){}
 }
-
-async function sendStop(){
-  const r=await fetch('/api/stop',{method:'POST'});
-  const d=await r.json();
-  log('STOP → '+d.result);
+async function doPost(url,label){try{const d=await api(url,'POST');lg(label+' \u2192 '+d.result,'cl');}catch(e){}}
+async function doSethome(){
+  const deg=parseInt(document.getElementById('ti').value,10);
+  const val=isNaN(deg)?0:Math.min(hdgMax,Math.max(hdgMin,deg));
+  try{const d=await api('/api/sethome','POST',{heading:val});lg('SETHOME '+val+'\u00b0 \u2192 '+d.result,'cl');}catch(e){}
 }
-
-async function sendCmd(){
-  const cmd=document.getElementById('ci').value.trim().toUpperCase();
-  if(!cmd)return;
-  document.getElementById('ci').value='';
-  const r=await fetch('/api/command',{method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({cmd})});
-  const d=await r.json();
-  log(cmd+' → '+d.result);
+async function dc(){
+  const ci=document.getElementById('ci'),cmd=ci.value.trim();if(!cmd)return;
+  ci.value='';cmdHist.unshift(cmd);if(cmdHist.length>50)cmdHist.pop();cmdIdx=-1;
+  try{const d=await api('/api/command','POST',{cmd:cmd});lg('> '+cmd,'cl');lg(d.result);}
+  catch(e){lg('ERR: '+e,'er2');}
 }
-
-drawCompass(0,-1);
-pollStatus();
-setInterval(pollStatus,1000);
+rndPre();drawCompass(0,-1);pollStatus();setInterval(pollStatus,500);
+setInterval(()=>{
+  const t=new Date();
+  document.getElementById('hdr-time').textContent=
+    String(t.getUTCHours()).padStart(2,'0')+':'+
+    String(t.getUTCMinutes()).padStart(2,'0')+':'+
+    String(t.getUTCSeconds()).padStart(2,'0')+'Z';
+},1000);
 </script>
 </body>
-</html>
-)rawliteral";
+</html>)rawliteral";
 
 // =============================================================================
 //  Web server handlers
@@ -400,11 +951,24 @@ void handleRoot() {
 }
 
 void handleStatus() {
-    StaticJsonDocument<160> doc;
-    doc["heading"]      = headingKnown ? serialized(String(currentHeading, 2)) : serialized(String("-1"));
-    doc["target"]       = serialized(String(targetHeading,  2));
+    StaticJsonDocument<640> doc;
+    // Apply mount offset so UI always shows compass bearings
+    auto toDisplay = [](float phys) { return fmodf(phys + HDG_OFFSET + 360.0f, 360.0f); };
+    doc["heading"]      = headingKnown ? serialized(String(toDisplay(currentHeading), 2)) : serialized(String("-1"));
+    doc["target"]       = serialized(String(targetHeading >= 0.0f ? toDisplay(targetHeading) : targetHeading, 2));
+    doc["hdgOffset"]    = serialized(String(HDG_OFFSET, 1));
     doc["status"]       = rotatorStatus;
     doc["headingKnown"] = headingKnown;
+    doc["msperdeg"]     = serialized(String(MS_PER_DEG, 1));
+    doc["deadband"]     = serialized(String(DEADBAND, 1));
+    doc["pinCW"]        = (int)digitalRead(PIN_MOTOR_CW);
+    doc["pinCCW"]       = (int)digitalRead(PIN_MOTOR_CCW);
+    doc["motorRunMs"]   = (motorDirection != 0) ? (unsigned long)(millis() - motorStartMs) : 0UL;
+    doc["uptime"]       = (unsigned long)millis();
+    doc["timingMode"]   = timingMode;
+    doc["hdgMin"]       = serialized(String(HDG_MIN, 1));
+    doc["hdgMax"]       = serialized(String(HDG_MAX, 1));
+    doc["hdgRestored"]  = hdgRestored;
     String json;
     serializeJson(doc, json);
     server.send(200, "application/json", json);
@@ -412,19 +976,50 @@ void handleStatus() {
 
 void handleGoto() {
     if (!server.hasArg("plain")) { server.send(400, "application/json", "{\"error\":\"no body\"}"); return; }
+    if (!headingKnown) {
+        server.send(200, "application/json", "{\"result\":\"ERR HEADING_UNKNOWN — run TIMECCW to end stop then STOP to home first\"}");
+        return;
+    }
     StaticJsonDocument<64> doc;
     if (deserializeJson(doc, server.arg("plain"))) { server.send(400, "application/json", "{\"error\":\"bad json\"}"); return; }
     float h = doc["heading"].as<float>();
-    h = fmodf(h + 360.0f, 360.0f);
-    targetHeading = h;
+    // Input is a compass bearing; convert to physical heading by subtracting offset
+    float physH = fmodf(h - HDG_OFFSET + 360.0f, 360.0f);
+    physH = fmaxf(HDG_MIN, fminf(HDG_MAX, physH));  // clamp to physical limits
+    freeRunMode   = false;
+    targetHeading = physH;
     server.send(200, "application/json",
         "{\"result\":\"OK\",\"target\":" + String(h, 1) + "}");
 }
 
 void handleStop() {
+    String resp = "{\"result\":\"STOPPED\"";
+    int prevDir = motorDirection;  // capture before motorStop() clears it
+    if (timingMode) {
+        unsigned long elapsed = millis() - timingStartMs;
+        timingMode = false;
+        float sweep = HDG_MAX - HDG_MIN;
+        resp += ",\"timedMs\":" + String(elapsed);
+        if (sweep > 0.0f)
+            resp += ",\"suggestedMsDeg\":" + String(elapsed / sweep, 1) +
+                    ",\"sweepDeg\":" + String(sweep, 0);
+        // Auto-home: CCW end stop = HDG_MIN (0°) — only set on CCW run
+        if (prevDir == -1) {
+            float homePos = HDG_MIN;
+            currentHeading = homePos;
+            motorStartHdg  = homePos;
+            headingKnown   = true;
+            hdgRestored    = false;
+            prefs.putFloat("lastheading", homePos);
+            prefs.putBool("hdgknown", true);
+            resp += ",\"autoHome\":" + String(homePos, 1);
+        }
+    }
+    resp += "}";
+    freeRunMode   = false;
     targetHeading = -1.0f;
     motorStop();
-    server.send(200, "application/json", "{\"result\":\"STOPPED\"}");
+    server.send(200, "application/json", resp);
 }
 
 void handleCommand() {
@@ -433,7 +1028,7 @@ void handleCommand() {
     if (deserializeJson(doc, server.arg("plain"))) { server.send(400); return; }
     String cmd    = doc["cmd"].as<String>();
     String result = processCommand(cmd);
-    StaticJsonDocument<128> resp;
+    StaticJsonDocument<384> resp;
     resp["result"] = result;
     String json;
     serializeJson(resp, json);
@@ -444,6 +1039,58 @@ void handleNotFound() {
     server.send(404, "text/plain", "Not found");
 }
 
+void handleCW() {
+    targetHeading = -1.0f;
+    freeRunMode   = true;
+    motorCW();
+    server.send(200, "application/json", "{\"result\":\"ROTATING_CW\"}");
+}
+
+void handleCCW() {
+    targetHeading = -1.0f;
+    freeRunMode   = true;
+    motorCCW();
+    server.send(200, "application/json", "{\"result\":\"ROTATING_CCW\"}");
+}
+
+void handleSethome() {
+    float deg = 0.0f;
+    if (server.hasArg("plain")) {
+        StaticJsonDocument<64> doc;
+        if (!deserializeJson(doc, server.arg("plain"))) {
+            deg = doc["heading"].as<float>();
+            deg = fmaxf(HDG_MIN, fminf(HDG_MAX, deg));  // clamp to limits
+        }
+    }
+    motorStop();
+    currentHeading = deg;
+    motorStartHdg  = deg;
+    headingKnown   = true;
+    hdgRestored    = false;
+    prefs.putFloat("lastheading", deg);
+    prefs.putBool("hdgknown", true);
+    server.send(200, "application/json",
+        "{\"result\":\"HOME_SET=" + String(deg, 1) + "\"}");
+}
+
+void handleTimeCW() {
+    targetHeading = -1.0f;
+    freeRunMode   = true;
+    timingMode    = true;
+    timingStartMs = millis();
+    motorCW();
+    server.send(200, "application/json", "{\"result\":\"TIMING_CW\"}" );
+}
+
+void handleTimeCCW() {
+    targetHeading = -1.0f;
+    freeRunMode   = true;
+    timingMode    = true;
+    timingStartMs = millis();
+    motorCCW();
+    server.send(200, "application/json", "{\"result\":\"TIMING_CCW\"}");
+}
+
 // =============================================================================
 //  Setup
 // =============================================================================
@@ -452,6 +1099,25 @@ void setup() {
     delay(100);
     Serial.println(F("\n\n=== nlOpenRotator ==="));
 
+    // Load calibration and last known heading from NVS (survives reboots)
+    prefs.begin("rotator", false);
+    MS_PER_DEG = prefs.getFloat("msperdeg",  163.0f);
+    HDG_MIN    = prefs.getFloat("hdgmin",    0.0f);
+    HDG_MAX    = prefs.getFloat("hdgmax",    360.0f);
+    DEADBAND   = prefs.getFloat("deadband",  4.0f);
+    HDG_OFFSET = prefs.getFloat("hdgoffset", 0.0f);
+    if (prefs.getBool("hdgknown", false)) {
+        currentHeading = prefs.getFloat("lastheading", 0.0f);
+        motorStartHdg  = currentHeading;
+        headingKnown   = true;
+        hdgRestored    = true;
+        Serial.printf("NVS: heading restored to %.1f deg\n", currentHeading);
+    }
+    Serial.printf("NVS: MSPERDEG=%.1f  MIN=%.1f  MAX=%.1f  DB=%.1f\n",
+                  MS_PER_DEG, HDG_MIN, HDG_MAX, DEADBAND);
+    staSSID = prefs.getString("wifissid", "");
+    staPass = prefs.getString("wifipass", "");
+
     pinMode(PIN_LED, OUTPUT);
 
     // Relay outputs — start with both relays off (HIGH = off on active-LOW module)
@@ -459,20 +1125,48 @@ void setup() {
     pinMode(PIN_MOTOR_CCW, OUTPUT);
     motorStop();
 
-    // WiFi access point
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP(AP_SSID, AP_PASS);
+    // WiFi — start AP first (always), then optionally join home network as STA
+    WiFi.mode(staSSID.length() > 0 ? WIFI_AP_STA : WIFI_AP);
+    WiFi.softAP(AP_SSID, AP_PASS, 6);  // pin to channel 6 so AP stays stable in AP+STA mode
     Serial.print(F("AP started  SSID="));
     Serial.print(AP_SSID);
     Serial.print(F("  IP="));
     Serial.println(WiFi.softAPIP());
 
+    if (staSSID.length() > 0) {
+        WiFi.begin(staSSID.c_str(), staPass.c_str());
+        Serial.print(F("WiFi STA connecting to "));
+        Serial.print(staSSID);
+        Serial.print(F(" "));
+        unsigned long t0 = millis();
+        while (WiFi.status() != WL_CONNECTED && millis() - t0 < 10000) {
+            delay(250); Serial.print('.');
+        }
+        if (WiFi.status() == WL_CONNECTED) {
+            staConnected = true;
+            staIP = WiFi.localIP();
+            Serial.print(F(" OK  STA-IP="));
+            Serial.println(staIP);
+        } else {
+            Serial.println(F(" FAILED (AP only)"));
+        }
+    }
+    if (staConnected) {
+        Serial.print(F("Web UI with satellite map: http://"));
+        Serial.println(staIP);
+    }
+
     // HTTP routes
-    server.on("/",            HTTP_GET,  handleRoot);
-    server.on("/api/status",  HTTP_GET,  handleStatus);
-    server.on("/api/goto",    HTTP_POST, handleGoto);
-    server.on("/api/stop",    HTTP_POST, handleStop);
-    server.on("/api/command", HTTP_POST, handleCommand);
+    server.on("/",             HTTP_GET,  handleRoot);
+    server.on("/api/status",   HTTP_GET,  handleStatus);
+    server.on("/api/goto",     HTTP_POST, handleGoto);
+    server.on("/api/stop",     HTTP_POST, handleStop);
+    server.on("/api/cw",       HTTP_POST, handleCW);
+    server.on("/api/ccw",      HTTP_POST, handleCCW);
+    server.on("/api/sethome",  HTTP_POST, handleSethome);
+    server.on("/api/timecw",   HTTP_POST, handleTimeCW);
+    server.on("/api/timeccw",  HTTP_POST, handleTimeCCW);
+    server.on("/api/command",  HTTP_POST, handleCommand);
     server.onNotFound(handleNotFound);
     server.begin();
 

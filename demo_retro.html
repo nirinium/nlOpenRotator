@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OpenRotator Control Panel v1.0</title>
+<style>
+/* ---- MID-2000s HARDWARE CONTROL PANEL ---- */
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{
+  background:#2a2a2a url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4'%3E%3Crect width='4' height='4' fill='%23282828'/%3E%3Crect x='0' y='2' width='4' height='1' fill='%232c2c2c' opacity='0.4'/%3E%3C/svg%3E");
+  color:#cccccc;
+  font-family:Tahoma,Verdana,Arial,sans-serif;
+  font-size:11px;
+  display:flex;flex-direction:column;
+}
+
+/* Title bar - WinXP style deep blue gradient */
+#hdr{
+  flex:none;
+  background:linear-gradient(180deg,#2563b8 0%,#1040a0 45%,#0c2e88 100%);
+  padding:4px 8px;
+  display:flex;align-items:center;justify-content:space-between;
+  border-bottom:2px solid #082060;
+  box-shadow:0 2px 5px rgba(0,0,0,0.7);
+}
+#hdr h1{
+  color:#ffffff;font-size:12px;font-weight:bold;letter-spacing:1px;
+  text-shadow:1px 1px 0px rgba(0,0,100,0.8),0 0 8px rgba(100,160,255,0.4);
+  font-family:Tahoma,Verdana,Arial,sans-serif;
+}
+#hdr-right{display:flex;align-items:center;gap:8px}
+#hdr-time{
+  font-family:"Courier New",monospace;font-size:11px;
+  color:#aaccff;background:#071844;
+  padding:1px 6px;border:1px solid #0a3080;
+  border-top-color:#1a50c0;border-left-color:#1a50c0;
+  letter-spacing:1px;
+}
+
+/* Restore warning banner */
+#rb{
+  flex:none;background:#2a1800;border-bottom:2px solid #884400;color:#ffaa44;
+  padding:3px 8px;font-size:10px;display:none;
+  justify-content:space-between;align-items:center;
+}
+#rb button{background:none;border:none;color:#ffaa44;cursor:pointer;font-size:13px}
+
+/* Main layout */
+#main{flex:1;display:flex;gap:4px;padding:4px;overflow:hidden;min-height:0}
+
+/* Panels - raised bevel like WinXP group controls */
+.pn{
+  background:linear-gradient(160deg,#222222 0%,#1c1c1c 100%);
+  border:2px solid;
+  border-color:#555555 #111111 #111111 #555555;
+  padding:6px;overflow:hidden;display:flex;flex-direction:column;
+}
+#pL{flex:none;width:190px}
+#pR{flex:1;min-width:0}
+canvas{display:block;margin:0 auto;cursor:crosshair}
+
+/* Relay LEDs */
+.rl-row{display:flex;gap:4px;margin-top:6px}
+.rl{
+  flex:1;padding:3px 2px;text-align:center;font-size:10px;line-height:1.4;
+  background:#0d0d0d;
+  border:1px solid #111;border-top-color:#3a3a3a;border-left-color:#3a3a3a;
+  color:#444444;font-family:"Courier New",monospace;
+}
+.rl.on{
+  background:#200000;
+  border-color:#660000;border-top-color:#cc2222;border-left-color:#cc2222;
+  color:#ff3333;
+  box-shadow:inset 0 0 6px rgba(255,0,0,0.2);
+}
+.rl b{display:block;font-size:11px}
+
+/* Heading / target LCD-style displays */
+.stat{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:2px 0;border-bottom:1px solid #2a2a2a;font-size:11px;
+}
+.stat:last-child{border:none}
+.stat span:first-child{color:#8899aa}
+.sv{
+  color:#33dd00;font-weight:bold;
+  font-family:"Courier New",monospace;font-size:15px;
+  text-shadow:0 0 6px #22bb00,0 0 12px rgba(50,200,0,0.3);
+  background:#060a06;
+  padding:1px 6px 1px 4px;
+  border:1px solid;border-color:#111 #2a2a2a #2a2a2a #111;
+  min-width:54px;text-align:right;display:inline-block;
+}
+
+/* Status badge */
+.badge{
+  padding:2px 8px;font-size:10px;font-weight:bold;
+  font-family:"Courier New",monospace;letter-spacing:1px;
+  border:1px solid;
+}
+.IDLE,.AT_TARGET{background:#091409;color:#44cc44;border-color:#1a5a1a}
+.ROTATING_CW,.ROTATING_CCW{background:#160900;color:#ff8800;border-color:#774400}
+.LIMIT_HIT{background:#160016;color:#cc44cc;border-color:#662266}
+
+/* Section headers - embossed panel strip */
+.sec{
+  font-size:10px;color:#7788aa;font-weight:bold;
+  text-transform:uppercase;letter-spacing:1px;
+  margin:5px 0 3px;
+  padding:2px 4px;
+  background:linear-gradient(180deg,#2a2a2a,#1e1e1e);
+  border-top:1px solid #444;border-bottom:1px solid #111;
+  font-family:Tahoma,Verdana,Arial,sans-serif;
+}
+
+/* Number input - inset LCD */
+input[type=number]{
+  width:100%;padding:3px 5px;
+  border:2px solid;border-color:#111 #444 #444 #111;
+  background:#060a06;color:#33dd00;
+  font-size:15px;font-family:"Courier New",monospace;
+  text-align:center;
+  text-shadow:0 0 5px #22bb00;
+}
+input[type=number]:focus{outline:none;border-color:#1a3a88}
+
+/* Button rows */
+.br{display:flex;gap:2px;margin-top:3px}
+
+/* Base button style - silver XP */
+button{
+  flex:1;padding:4px 2px;
+  border:2px solid;border-color:#d8d4cc #777070 #777070 #d8d4cc;
+  border-radius:0;
+  background:linear-gradient(180deg,#d4d0c8 0%,#bcb8b0 50%,#a8a4a0 100%);
+  color:#1a1a1a;
+  font-size:10px;font-weight:bold;
+  cursor:pointer;
+  font-family:Tahoma,Verdana,Arial,sans-serif;
+  white-space:nowrap;
+}
+button:hover{background:linear-gradient(180deg,#dcdcd4 0%,#c8c4bc 50%,#b8b4b0 100%)}
+button:active{
+  border-color:#888 #ddd #ddd #888;
+  background:linear-gradient(180deg,#a4a09c 0%,#bcb8b4 60%,#d0ccc8 100%);
+  padding:5px 2px 3px 3px;
+}
+
+/* Specific button overrides */
+#bGo{
+  background:linear-gradient(180deg,#68b050,#3a7828);
+  color:#fff;border-color:#99dd88 #225518 #225518 #99dd88;
+}
+#bGo:hover{background:linear-gradient(180deg,#78c060,#4a8838)}
+#bSt{
+  background:linear-gradient(180deg,#cc4040,#8a1818);
+  color:#fff;border-color:#ee9090 #551212 #551212 #ee9090;
+}
+#bSt:hover{background:linear-gradient(180deg,#dd5050,#9a2828)}
+#bHm{
+  background:linear-gradient(180deg,#5577bb,#2244aa);
+  color:#fff;border-color:#88aadd #112288 #112288 #88aadd;
+}
+#bHm:hover{background:linear-gradient(180deg,#6688cc,#3355bb)}
+#bCW,#bCC{
+  background:linear-gradient(180deg,#448888,#1e5555);
+  color:#ddffff;border-color:#88cccc #113333 #113333 #88cccc;
+}
+#bTC,#bTCC{
+  background:linear-gradient(180deg,#886622,#553300);
+  color:#ffcc88;border-color:#ccaa55 #332200 #332200 #ccaa55;
+}
+
+/* Presets */
+.pre-row{display:grid;grid-template-columns:repeat(4,1fr);gap:2px;margin-top:3px}
+.pre{
+  border:2px solid;border-color:#444 #111 #111 #444;
+  padding:2px;cursor:pointer;
+  font-size:10px;background:#111111;color:#444;
+  min-height:28px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+}
+.ps{
+  color:#cccccc;border-color:#555 #222 #222 #555;
+  background:linear-gradient(180deg,#282828,#1c1c1c);
+  flex-direction:row;justify-content:space-between;padding:2px 4px;
+}
+.ps:hover{border-color:#6699cc #334455 #334455 #6699cc}
+.ps .pd{text-align:left;line-height:1.3}
+.ps .pd b{display:block;color:#88bbdd;font-size:10px;font-family:"Courier New",monospace}
+.ps .pe{font-size:11px;color:#555;cursor:pointer;padding:0 2px;flex:none}
+.ps .pe:hover{color:#ffcc44}
+
+/* Map */
+#mapWrap{
+  flex:none;overflow:hidden;position:relative;margin-bottom:3px;display:none;
+  border:2px solid;border-color:#111 #555 #555 #111;
+}
+#mapWrap img{width:100%;height:auto;display:block}
+#mapCvs{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
+
+/* Debug info grid */
+.dg{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px 6px}
+.di{
+  padding:2px 0;border-bottom:1px solid #222;
+  font-size:10px;display:flex;justify-content:space-between;
+}
+.di span:first-child{color:#556677}
+.dv{color:#88bbcc;font-weight:bold;font-family:"Courier New",monospace}
+.ok{color:#44cc44!important}.wn{color:#ffaa44!important}.er{color:#ff4444!important}
+
+/* Console log - green phosphor CRT */
+#log{
+  flex:1;
+  background:#020402;
+  border:2px solid;border-color:#111 #333 #333 #111;
+  padding:4px 5px;
+  overflow-y:auto;
+  font-size:10px;color:#336633;
+  min-height:40px;
+  font-family:"Courier New",monospace;
+}
+#log p{margin:0;line-height:1.4}
+.cl{color:#3399cc}.er2{color:#cc3333}
+
+/* Command bar */
+.cr{display:flex;gap:2px;margin-top:3px;flex:none}
+.cr input{
+  flex:1;padding:3px 5px;
+  border:2px solid;border-color:#111 #444 #444 #111;
+  background:#020402;color:#88ccff;
+  font-size:11px;font-family:"Courier New",monospace;
+}
+.cr input:focus{outline:none;border-color:#1a3a88}
+.cr button{
+  flex:none;padding:4px 10px;
+  background:linear-gradient(180deg,#5577bb,#2244aa);
+  color:#ffffff;
+  border:2px solid;border-color:#88aadd #112288 #112288 #88aadd;
+  cursor:pointer;font-weight:bold;font-size:11px;
+  font-family:Tahoma,Verdana,Arial,sans-serif;border-radius:0;
+}
+.cr button:hover{background:linear-gradient(180deg,#6688cc,#3355bb)}
+.cr button:active{border-color:#224488 #99aacc #99aacc #224488}
+
+/* Label/toggle row */
+.lbar{display:flex;justify-content:space-between;align-items:center;flex:none}
+.lb{
+  padding:2px 7px;font-size:10px;
+  background:linear-gradient(180deg,#333,#222);
+  color:#8899aa;
+  border:1px solid;border-color:#555 #222 #222 #555;
+  cursor:pointer;font-family:Tahoma,Verdana,Arial,sans-serif;
+  border-radius:0;
+}
+.lb:hover{background:linear-gradient(180deg,#3c3c3c,#2a2a2a)}
+
+/* Scrollbar - darker style */
+::-webkit-scrollbar{width:8px;background:#111}
+::-webkit-scrollbar-track{background:#111;border-left:1px solid #222}
+::-webkit-scrollbar-thumb{background:#444;border:1px solid #555}
+::-webkit-scrollbar-thumb:hover{background:#555}
+</style>
+</head>
+<body>
+<div id="hdr">
+  <h1>&#x2316;&nbsp; OPEN ROTATOR &mdash; CONTROL PANEL v1.0</h1>
+  <div id="hdr-right">
+    <span id="hdr-time">--:--:--</span>
+    <span id="sts2"><span class="badge IDLE">IDLE</span></span>
+  </div>
+</div>
+<div id="rb">
+  &#9888;&nbsp; Heading restored from saved state &mdash; verify antenna position before using GOTO
+  <button onclick="dismissRb()">&#x2715;</button>
+</div>
+<div id="main">
+  <div class="pn" id="pL">
+    <canvas id="cmp" width="166" height="166" title="Click to set target"></canvas>
+    <div class="rl-row">
+      <div class="rl off" id="rA">CW<b id="rAs">OFF</b></div>
+      <div class="rl off" id="rB">CCW<b id="rBs">OFF</b></div>
+    </div>
+    <div style="margin-top:6px">
+      <div class="stat"><span>Heading</span><span class="sv" id="hdg">---&deg;</span></div>
+      <div class="stat"><span>Target</span><span class="sv" id="tgt">---&deg;</span></div>
+    </div>
+  </div>
+  <div class="pn" id="pR">
+    <div class="sec">Navigate</div>
+    <input type="number" id="ti" value="180" min="0" max="360">
+    <div class="br">
+      <button id="bGo" onclick="sendGotoVal(-1)">GOTO</button>
+      <button id="bSt" onclick="doStop()">STOP</button>
+      <button id="bHm" onclick="doSethome()">HOME</button>
+    </div>
+    <div class="br" style="margin-top:3px">
+      <button id="bCW"  onclick="doCW()">&#9664;&nbsp;CW</button>
+      <button id="bCC"  onclick="doCCW()">CCW&nbsp;&#9654;</button>
+      <button id="bTC"  onclick="lg('TIMECW sent','cl')">&#9201;&nbsp;T-CW</button>
+      <button id="bTCC" onclick="lg('TIMECCW sent','cl')">&#9201;&nbsp;T-CCW</button>
+    </div>
+    <div class="sec">Presets <span style="font-size:.55rem;color:#334;font-weight:normal">&nbsp;click=GOTO &nbsp;&#x270E;=edit</span></div>
+    <div class="pre-row" id="prs"></div>
+    <div class="sec" style="display:flex;align-items:center;justify-content:space-between">
+      <span>Area Map</span>
+      <button class="lb" id="btnMapTog" onclick="toggleMap()">Show</button>
+    </div>
+    <div id="mapWrap">
+      <img id="mapImg"
+        src="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox=-88.0%2C36.3%2C-82.6%2C39.8&bboxSR=4326&size=900%2C560&format=png&f=image"
+        alt="Taylorsville KY area" onload="drawMapOverlay()">
+      <canvas id="mapCvs"></canvas>
+    </div>
+    <div class="sec">Diagnostics</div>
+    <div class="dg">
+      <div class="di"><span>Runtime</span><span class="dv" id="dRt">0ms</span></div>
+      <div class="di"><span>Uptime</span><span class="dv" id="dUp">0s</span></div>
+      <div class="di"><span>MS/Deg</span><span class="dv" id="dMd">12.5</span></div>
+      <div class="di"><span>Deadband</span><span class="dv" id="dDb">1.0&deg;</span></div>
+      <div class="di"><span>Known</span><span class="dv ok" id="dKn">YES</span></div>
+      <div class="di"><span>Timing</span><span class="dv" id="dTm">OFF</span></div>
+      <div class="di"><span>Min</span><span class="dv" id="dMn">0&deg;</span></div>
+      <div class="di"><span>Max</span><span class="dv" id="dMx">360&deg;</span></div>
+    </div>
+    <div class="lbar" style="margin-top:5px">
+      <span class="sec" style="margin:0">Console</span>
+      <button class="lb" onclick="cl()">Clear</button>
+    </div>
+    <div id="log"></div>
+    <div class="cr">
+      <input id="ci" placeholder="GOTO 180 | SETWIFI myssid mypass | FACTORY | HELP" onkeydown="ok(event)">
+      <button onclick="dc()">SEND</button>
+    </div>
+  </div>
+</div>
+<script>
+// ---- CANVAS CONSTANTS ----
+const W=166,CX=83,CY=83,R=76;
+let heading=135,target=-1,hdgMin=0,hdgMax=360;
+let displayHeading=135,animId=null;
+let cmdHist=[],cmdIdx=-1,restoredDismissed=false;
+let mapOpen=false;
+let simRunning=false,simDir=1,simUptime=0;
+
+// QTH: 847 Townhill Rd, Taylorsville KY 40071
+const MAP_LAT=38.032,MAP_LON=-85.347;
+const MAP_W=-88.0,MAP_E=-82.6,MAP_S=36.3,MAP_N=39.8;
+const MAP_CITIES=[
+  ['Louisville',38.2527,-85.7585],['Lexington',38.0406,-84.5037],
+  ['Frankfort',38.2009,-84.8733],['Cincinnati',39.1031,-84.5120],
+  ["E'town",37.6937,-85.8591],['Bardstown',37.8137,-85.4669],
+  ['Shelbyville',38.2115,-85.2238],['Lawrenceburg',38.037,-84.899],
+  ['Bowling Green',36.9903,-86.4436],['Indianapolis',39.7684,-86.1581],
+];
+
+// ---- COMPASS DRAW (retro amber/phosphor) ----
+function drawCompass(h,t){
+  const c=document.getElementById('cmp').getContext('2d');
+  c.clearRect(0,0,W,W);
+
+  // Outer bezel ring
+  c.beginPath();c.arc(CX,CY,R+2,0,Math.PI*2);
+  const bzg=c.createRadialGradient(CX-10,CY-10,R-10,CX,CY,R+4);
+  bzg.addColorStop(0,'#4a4a4a');bzg.addColorStop(1,'#111');
+  c.fillStyle=bzg;c.fill();
+
+  // Face
+  c.beginPath();c.arc(CX,CY,R,0,Math.PI*2);
+  const fg=c.createRadialGradient(CX,CY,0,CX,CY,R);
+  fg.addColorStop(0,'#151208');fg.addColorStop(1,'#080604');
+  c.fillStyle=fg;c.fill();
+  c.strokeStyle='#2a2010';c.lineWidth=2;c.stroke();
+
+  // Travel limit shading
+  if(hdgMax-hdgMin<355){
+    const sa=((hdgMax-90+720)%360)*Math.PI/180,ea=((hdgMin-90+720)%360)*Math.PI/180;
+    c.beginPath();c.moveTo(CX,CY);c.arc(CX,CY,R-1,sa,ea);c.closePath();
+    c.fillStyle='rgba(6,4,2,0.88)';c.fill();
+    [hdgMin,hdgMax].forEach(d=>{
+      const a=(d-90)*Math.PI/180;
+      c.beginPath();c.moveTo(CX+62*Math.cos(a),CY+62*Math.sin(a));
+      c.lineTo(CX+75*Math.cos(a),CY+75*Math.sin(a));
+      c.strokeStyle='#cc7700';c.lineWidth=3;c.stroke();
+    });
+  }
+
+  // Target arc
+  if(t>=0&&Math.abs(h-t)>0.5){
+    const sA=(h-90)*Math.PI/180,eA=(t-90)*Math.PI/180;
+    c.beginPath();c.arc(CX,CY,70,sA,eA,t<h);
+    c.strokeStyle='rgba(255,165,0,0.35)';c.lineWidth=4;c.stroke();
+  }
+
+  // Tick marks
+  for(let i=0;i<72;i++){
+    const a=(i*5-90)*Math.PI/180,big=i%18===0,med=i%6===0;
+    c.beginPath();
+    c.moveTo(CX+(big?55:med?60:64)*Math.cos(a),CY+(big?55:med?60:64)*Math.sin(a));
+    c.lineTo(CX+74*Math.cos(a),CY+74*Math.sin(a));
+    c.strokeStyle=big?'#bb8800':med?'#664400':'#331f00';
+    c.lineWidth=big?2:1;c.stroke();
+  }
+
+  // Cardinal labels
+  [['N',0,'#ff2200'],['E',90,'#886600'],['S',180,'#886600'],['W',270,'#886600']].forEach(([l,d,col])=>{
+    const a=(d-90)*Math.PI/180;
+    c.fillStyle=col;c.font='bold 10px "Courier New",monospace';
+    c.textAlign='center';c.textBaseline='middle';
+    c.fillText(l,CX+47*Math.cos(a),CY+47*Math.sin(a));
+  });
+
+  // Target dashed line
+  if(t>=0){
+    const ta=(t-90)*Math.PI/180;
+    c.beginPath();c.moveTo(CX,CY);
+    c.lineTo(CX+R*.78*Math.cos(ta),CY+R*.78*Math.sin(ta));
+    c.strokeStyle='rgba(255,200,0,0.6)';c.lineWidth=2;c.setLineDash([3,3]);c.stroke();c.setLineDash([]);
+  }
+
+  // Needle
+  const na=(h-90)*Math.PI/180;
+  c.beginPath();c.moveTo(CX-14*Math.cos(na),CY-14*Math.sin(na));c.lineTo(CX,CY);
+  c.strokeStyle='#3a2a00';c.lineWidth=3;c.stroke();
+  c.beginPath();c.moveTo(CX,CY);c.lineTo(CX+58*Math.cos(na),CY+58*Math.sin(na));
+  c.strokeStyle='#ff6600';c.lineWidth=3;
+  c.shadowColor='rgba(255,120,0,0.5)';c.shadowBlur=4;c.stroke();
+  c.shadowBlur=0;
+
+  // Center pip
+  c.beginPath();c.arc(CX,CY,5,0,Math.PI*2);
+  const pg=c.createRadialGradient(CX-1,CY-1,1,CX,CY,5);
+  pg.addColorStop(0,'#ffcc44');pg.addColorStop(1,'#aa6600');
+  c.fillStyle=pg;c.fill();
+  c.strokeStyle='#332200';c.lineWidth=1;c.stroke();
+
+  // Heading readout - green phosphor
+  c.fillStyle='#22dd00';c.font='bold 13px "Courier New",monospace';
+  c.textAlign='center';c.textBaseline='middle';
+  c.shadowColor='rgba(50,220,0,0.6)';c.shadowBlur=5;
+  c.fillText(Math.round(h)+'\u00b0',CX,CY+21);
+  c.shadowBlur=0;
+}
+
+function startAnim(){
+  if(animId)return;
+  function step(){
+    const d=heading-displayHeading;
+    if(Math.abs(d)>90){displayHeading=heading;drawCompass(displayHeading,target);drawMapOverlay();animId=null;return;}
+    if(Math.abs(d)>0.2){displayHeading+=d*.14;drawCompass(displayHeading,target);animId=requestAnimationFrame(step);}
+    else{displayHeading=heading;drawCompass(displayHeading,target);drawMapOverlay();animId=null;}
+  }
+  animId=requestAnimationFrame(step);
+}
+
+document.getElementById('cmp').addEventListener('click',e=>{
+  const rect=e.target.getBoundingClientRect(),sc=rect.width/W;
+  let deg=Math.atan2(e.clientY-rect.top-CY*sc,e.clientX-rect.left-CX*sc)*180/Math.PI+90;
+  if(deg<0)deg+=360;
+  deg=Math.min(hdgMax,Math.max(hdgMin,Math.round(deg)%360));
+  document.getElementById('ti').value=deg;
+  sendGotoVal(deg);
+});
+
+// ---- PRESETS ----
+const NP=4;
+function lps(){try{return JSON.parse(localStorage.getItem('rtp_demo')||'[]');}catch{return [];}}
+function sps(a){localStorage.setItem('rtp_demo',JSON.stringify(a));}
+function rndPre(){
+  const ps=lps(),el=document.getElementById('prs');el.innerHTML='';
+  for(let i=0;i<NP;i++){
+    const p=ps[i],d=document.createElement('div');
+    if(p){
+      d.className='pre ps';
+      d.innerHTML='<span class="pd" onclick="gtp('+i+')">'+p.l+'<b>'+p.d+'\u00b0</b></span>'
+                 +'<span class="pe" onclick="stp('+i+')" title="Edit">&#x270E;</span>';
+    }else{
+      d.className='pre';
+      d.innerHTML='<span style="color:#333;text-align:center" onclick="stp('+i+')">'
+                 +'P'+(i+1)+'<b style="display:block;color:#222;font-size:.7rem">+</b></span>';
+    }
+    el.appendChild(d);
+  }
+}
+function gtp(i){const ps=lps();if(ps[i])sendGotoVal(ps[i].d);}
+function stp(i){
+  const ps=lps(),cur=ps[i];
+  const dv=parseFloat(document.getElementById('ti').value);
+  const nl=prompt('Preset '+(i+1)+' label (6 chars max):',cur?cur.l:'P'+(i+1));
+  if(nl===null)return;
+  const nd=prompt('Heading (degrees):',isNaN(dv)?(cur?cur.d:0):Math.round(dv));
+  if(nd===null)return;
+  ps[i]={l:(nl.trim().slice(0,6)||('P'+(i+1))),d:parseInt(nd)||0};
+  sps(ps);rndPre();
+}
+
+// ---- MAP OVERLAY (amber/phosphor theme) ----
+function ll2px(lat,lon,Wp,Hp){
+  return[(lon-MAP_W)/(MAP_E-MAP_W)*Wp,(MAP_N-lat)/(MAP_N-MAP_S)*Hp];}
+function distMi(a,b,c,d){
+  const Rv=3958.8,dL=(c-a)*Math.PI/180,dG=(d-b)*Math.PI/180;
+  const x=Math.sin(dL/2)**2+Math.cos(a*Math.PI/180)*Math.cos(c*Math.PI/180)*Math.sin(dG/2)**2;
+  return Rv*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));}
+function drawMapOverlay(){
+  if(!mapOpen)return;
+  const img=document.getElementById('mapImg'),cvs=document.getElementById('mapCvs');
+  if(!img||!cvs||!img.complete||!img.naturalWidth)return;
+  const Wp=img.offsetWidth,Hp=img.offsetHeight;if(!Wp||!Hp)return;
+  cvs.width=Wp;cvs.height=Hp;
+  const c=cvs.getContext('2d');
+  c.clearRect(0,0,Wp,Hp);
+  const[hx,hy]=ll2px(MAP_LAT,MAP_LON,Wp,Hp);
+  const pxMi=Hp/(MAP_N-MAP_S)/69.0;
+  [50,100,150,200].forEach(mi=>{
+    const r=mi*pxMi;
+    c.beginPath();c.arc(hx,hy,r,0,Math.PI*2);
+    c.strokeStyle='rgba(220,160,0,0.35)';c.lineWidth=1;c.setLineDash([5,4]);c.stroke();c.setLineDash([]);
+    const rx=hx+r*0.707,ry=hy-r*0.707;
+    c.lineWidth=2;c.strokeStyle='rgba(0,0,0,0.75)';
+    c.font='bold 9px "Courier New",monospace';c.textAlign='left';c.textBaseline='middle';
+    c.strokeText(mi+'mi',rx+1,ry+1);c.fillStyle='rgba(220,160,0,0.9)';c.fillText(mi+'mi',rx,ry);
+  });
+  MAP_CITIES.forEach(([name,lat,lon])=>{
+    const[cx,cy]=ll2px(lat,lon,Wp,Hp);
+    const d=distMi(MAP_LAT,MAP_LON,lat,lon).toFixed(0)+'mi';
+    c.beginPath();c.arc(cx,cy,4,0,Math.PI*2);
+    c.fillStyle='#ffcc44';c.fill();c.strokeStyle='#1a0e00';c.lineWidth=1.5;c.stroke();
+    c.font='bold 10px "Courier New",monospace';c.textAlign='left';c.textBaseline='bottom';
+    c.lineWidth=3;c.strokeStyle='rgba(0,0,0,0.88)';
+    c.strokeText(name,cx+6,cy);c.fillStyle='#ffe088';c.fillText(name,cx+6,cy);
+    c.font='9px "Courier New",monospace';c.lineWidth=2;
+    c.strokeText(d,cx+6,cy+11);c.fillStyle='#88ff88';c.fillText(d,cx+6,cy+11);
+  });
+  const rad=displayHeading*Math.PI/180,blen=Math.hypot(Wp,Hp);
+  c.beginPath();c.moveTo(hx,hy);c.lineTo(hx+blen*Math.sin(rad),hy-blen*Math.cos(rad));
+  c.strokeStyle='rgba(255,44,44,0.9)';c.lineWidth=2;c.setLineDash([]);c.stroke();
+  const lx=hx+45*Math.sin(rad),ly=hy-45*Math.cos(rad);
+  c.font='bold 12px "Courier New",monospace';c.textAlign='center';c.textBaseline='middle';
+  c.lineWidth=3;c.strokeStyle='rgba(0,0,0,0.9)';
+  const ht=Math.round(displayHeading)+'\u00b0';
+  c.strokeText(ht,lx,ly);c.fillStyle='#ff3333';c.fillText(ht,lx,ly);
+  c.beginPath();c.arc(hx,hy,7,0,Math.PI*2);
+  c.fillStyle='#ffcc44';c.fill();c.strokeStyle='#fff8e0';c.lineWidth=2;c.stroke();
+  c.beginPath();c.moveTo(hx-13,hy);c.lineTo(hx+13,hy);c.moveTo(hx,hy-13);c.lineTo(hx,hy+13);
+  c.strokeStyle='rgba(220,160,0,0.7)';c.lineWidth=1;c.stroke();
+  c.font='bold 10px "Courier New",monospace';c.textAlign='center';c.textBaseline='bottom';
+  c.lineWidth=2;c.strokeStyle='rgba(0,0,0,0.75)';
+  c.strokeText('N',hx,hy-16);c.fillStyle='#ff2200';c.fillText('N',hx,hy-16);
+}
+function toggleMap(){
+  mapOpen=!mapOpen;
+  document.getElementById('mapWrap').style.display=mapOpen?'block':'none';
+  document.getElementById('btnMapTog').textContent=mapOpen?'Hide':'Show';
+  if(mapOpen)setTimeout(drawMapOverlay,60);
+}
+
+// ---- UI helpers ----
+function dismissRb(){restoredDismissed=true;document.getElementById('rb').style.display='none';}
+function lg(msg,cls){
+  const el=document.getElementById('log'),p=document.createElement('p');
+  if(cls)p.className=cls;
+  p.textContent=new Date().toLocaleTimeString()+' '+msg;
+  el.appendChild(p);el.scrollTop=el.scrollHeight;
+  if(el.children.length>80)el.removeChild(el.firstChild);
+}
+function cl(){document.getElementById('log').innerHTML='';}
+function ok(e){
+  if(e.key==='Enter'){dc();return;}
+  if(e.key==='ArrowUp'){if(!cmdHist.length)return;cmdIdx=Math.min(cmdIdx+1,cmdHist.length-1);document.getElementById('ci').value=cmdHist[cmdIdx];e.preventDefault();}
+  if(e.key==='ArrowDown'){cmdIdx=Math.max(cmdIdx-1,-1);document.getElementById('ci').value=cmdIdx<0?'':cmdHist[cmdIdx];e.preventDefault();}
+}
+
+// ---- SIMULATION (no real ESP32 needed for demo) ----
+function setStatus(st){
+  document.getElementById('sts2').innerHTML='<span class="badge '+st+'">'+st+'</span>';
+}
+function sendGotoVal(deg){
+  if(deg<0){deg=parseFloat(document.getElementById('ti').value);if(isNaN(deg))return;}
+  deg=Math.round(Math.min(hdgMax,Math.max(hdgMin,deg)));
+  target=deg;
+  document.getElementById('tgt').textContent=deg+'\u00b0';
+  simRunning=true;
+  simDir=heading<target?1:-1;
+  setStatus(simDir>0?'ROTATING_CW':'ROTATING_CCW');
+  document.getElementById('rA').className='rl '+(simDir>0?'on':'off');
+  document.getElementById('rAs').textContent=simDir>0?'ON':'OFF';
+  document.getElementById('rB').className='rl '+(simDir<0?'on':'off');
+  document.getElementById('rBs').textContent=simDir<0?'ON':'OFF';
+  lg('GOTO '+deg+'\u00b0 \u2192 OK','cl');
+}
+function doStop(){
+  simRunning=false;target=-1;
+  document.getElementById('tgt').textContent='---\u00b0';
+  document.getElementById('rA').className='rl off';document.getElementById('rAs').textContent='OFF';
+  document.getElementById('rB').className='rl off';document.getElementById('rBs').textContent='OFF';
+  setStatus('IDLE');lg('STOP \u2192 OK','cl');
+}
+function doCW(){
+  simRunning=true;simDir=1;target=-1;
+  document.getElementById('rA').className='rl on';document.getElementById('rAs').textContent='ON';
+  document.getElementById('rB').className='rl off';document.getElementById('rBs').textContent='OFF';
+  setStatus('ROTATING_CW');lg('CW \u2192 OK','cl');
+}
+function doCCW(){
+  simRunning=true;simDir=-1;target=-1;
+  document.getElementById('rA').className='rl off';document.getElementById('rAs').textContent='OFF';
+  document.getElementById('rB').className='rl on';document.getElementById('rBs').textContent='ON';
+  setStatus('ROTATING_CCW');lg('CCW \u2192 OK','cl');
+}
+function doSethome(){
+  const deg=parseInt(document.getElementById('ti').value,10)||0;
+  heading=deg;displayHeading=deg;target=-1;
+  document.getElementById('hdg').textContent=deg.toFixed(1)+'\u00b0';
+  document.getElementById('tgt').textContent='---\u00b0';
+  drawCompass(heading,target);setStatus('IDLE');lg('SETHOME '+deg+'\u00b0 \u2192 OK','cl');
+}
+function dc(){
+  const ci=document.getElementById('ci'),cmd=ci.value.trim();if(!cmd)return;
+  ci.value='';cmdHist.unshift(cmd);if(cmdHist.length>50)cmdHist.pop();cmdIdx=-1;
+  const up=cmd.toUpperCase();
+  lg('> '+cmd,'cl');
+  if(up.startsWith('GOTO')){const d=parseInt(up.split(' ')[1]);if(!isNaN(d)){sendGotoVal(d);return;}}
+  if(up==='STOP'){doStop();return;}
+  if(up==='CW'){doCW();return;}
+  if(up==='CCW'){doCCW();return;}
+  if(up==='HELP'){lg('Commands: GOTO n | STOP | CW | CCW | SETHOME | STATUS');return;}
+  if(up==='STATUS'){lg('HDG='+heading.toFixed(1)+' TGT='+(target>=0?target:'---')+' STATUS='+(simRunning?'ROTATING':'IDLE'));return;}
+  lg('[DEMO] Command acknowledged: '+cmd);
+}
+
+// ---- SIMULATION TICK ----
+let lastTick=Date.now();
+function simTick(){
+  simUptime+=500;
+  const now=Date.now(),dt=(now-lastTick)/1000;lastTick=now;
+  if(simRunning){
+    heading+=simDir*12.5*dt; // ~12.5 deg/sec
+    if(heading>360)heading-=360;
+    if(heading<0)heading+=360;
+    if(target>=0&&Math.abs(heading-target)<1.5){
+      heading=target;simRunning=false;target=-1;
+      document.getElementById('tgt').textContent='---\u00b0';
+      document.getElementById('rA').className='rl off';document.getElementById('rAs').textContent='OFF';
+      document.getElementById('rB').className='rl off';document.getElementById('rBs').textContent='OFF';
+      setStatus('AT_TARGET');lg('AT TARGET \u2192 '+heading.toFixed(1)+'\u00b0','cl');
+      setTimeout(()=>setStatus('IDLE'),2000);
+    }
+  }
+  document.getElementById('hdg').textContent=heading.toFixed(1)+'\u00b0';
+  document.getElementById('dUp').textContent=fUp(simUptime);
+  startAnim();
+
+  // Clock
+  document.getElementById('hdr-time').textContent=new Date().toLocaleTimeString('en-US',{hour12:false});
+}
+
+function fUp(ms){const s=Math.floor(ms/1000),h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sc=s%60;return(h?h+'h ':'')+( m?m+'m ':'')+sc+'s';}
+
+// ---- INIT ----
+rndPre();
+drawCompass(heading,-1);
+document.getElementById('hdg').textContent=heading.toFixed(1)+'\u00b0';
+lg('OpenRotator Control Panel v1.0 [DEMO MODE]');
+lg('-- All controls functional, no ESP32 required --');
+setInterval(simTick,100);
+</script>
+</body>
+</html>

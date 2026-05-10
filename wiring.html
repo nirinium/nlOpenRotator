@@ -500,69 +500,110 @@
 </div></code></pre>
 	<hr>
 	<h2 id="schematic--relay-module-wiring">Schematic — relay module wiring</h2>
+	<p>Each relay module has two connectors:</p>
+	<p><strong>Control-side pins</strong> (3 pins, left to right): <code>S</code> · <code>+</code> · <code>-</code></p>
+	<table>
+		<thead>
+			<tr>
+				<th>Pin</th>
+				<th>Connect to</th>
+			</tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td><code>S</code> (Signal)</td>
+				<td>ESP32 GPIO (LOW = relay energised)</td>
+			</tr>
+			<tr>
+				<td><code>+</code> (VCC)</td>
+				<td>ESP32 5 V (VIN pin)</td>
+			</tr>
+			<tr>
+				<td><code>-</code> (GND)</td>
+				<td>ESP32 GND</td>
+			</tr>
+		</tbody>
+	</table>
+	<p><strong>Load-side terminal block</strong> (3 screw terminals, no markings): probe with a multimeter in
+		continuity/resistance mode <strong>before wiring AC</strong>:</p>
+	<ul>
+		<li>With relay <strong>de-energised</strong> (no power): the two terminals that show continuity → that pair is
+			<strong>NC + COM</strong>; the isolated terminal is <strong>NO</strong>.</li>
+		<li>With relay <strong>energised</strong> (power applied): continuity shifts to the other pair → confirming
+			<strong>NO + COM</strong>.</li>
+		<li>Wire <strong>COM</strong> to 24 V AC hot; wire <strong>NO</strong> to the motor winding; leave
+			<strong>NC</strong> unconnected.</li>
+	</ul>
 	<pre class="hljs"><code><div> ┌───────────────────────────────────────────────────────┐
- │     RELAY MODULE A — CW  (5 V, active LOW)          │
+ │     RELAY MODULE A — CW  (5 V, active LOW)            │
  │                                                       │
- │  VCC ◄──── 5 V (from ESP32 5V/VIN pin)               │
- │  GND ◄──── GND                                        │
- │  IN  ◄──── GPIO 25  (LOW = relay energised)           │
+ │  Control pins (left → right):                         │
+ │   S ◄──── GPIO 25  (LOW = relay energised)            │
+ │   + ◄──── 5 V (from ESP32 VIN pin)                    │
+ │   - ◄──── GND                                         │
  │                                                       │
- │  Relay: COM ── 24 V AC hot                           │
- │         NO  ── Motor CW terminal                     │
- │         NC  ── (leave unconnected)                   │
+ │  Terminal block (probe to identify — see above):      │
+ │   COM ── 24 V AC wire A (hot side)                    │
+ │   NO  ── Controller terminal 1 (brown/white → T1)     │
+ │   NC  ── (leave unconnected)                          │
  └───────────────────────────────────────────────────────┘
 
  ┌───────────────────────────────────────────────────────┐
  │     RELAY MODULE B — CCW  (5 V, active LOW)           │
  │                                                       │
- │  VCC ◄──── 5 V (from ESP32 5V/VIN pin)               │
- │  GND ◄──── GND                                        │
- │  IN  ◄──── GPIO 26  (LOW = relay energised)           │
+ │  Control pins (left → right):                         │
+ │   S ◄──── GPIO 26  (LOW = relay energised)            │
+ │   + ◄──── 5 V (from ESP32 VIN pin)                    │
+ │   - ◄──── GND                                         │
  │                                                       │
- │  Relay: COM ── 24 V AC hot                           │
- │         NO  ── Motor CCW terminal                    │
- │         NC  ── (leave unconnected)                   │
+ │  Terminal block (probe to identify — see above):      │
+ │   COM ── 24 V AC wire A (hot side)                    │
+ │   NO  ── Controller terminal 2 (blue/white → T3)      │
+ │   NC  ── (leave unconnected)                          │
  └───────────────────────────────────────────────────────┘
 
- Motor COM ─────────────────────────── 24 V AC neutral (transformer secondary A)
+ Controller terminal 3 (green/white → T2) ── 24 V AC wire B (direct, no relay)
 </div></code></pre>
 	<blockquote>
-		<p>Most relay modules have <strong>active-LOW</strong> inputs — the relay energises when
-			the ESP32 pin is pulled LOW. The firmware handles this; see the note in
-			<code>main.cpp</code>.
+		<p>These modules are <strong>active-LOW</strong> — the relay energises when the ESP32 pulls <code>S</code> LOW.
+			The firmware handles this; see the note in <code>main.cpp</code>.
 		</p>
 	</blockquote>
 	<hr>
-	<h2 id="rotator-cable-pinout-probe-with-a-multimeter--do-not-assume">Rotator cable pinout (probe with a multimeter —
-		do not assume)</h2>
-	<p>Typical 3-wire RCA rotator cable:</p>
+	<h2 id="rotator-cable-pinout">Rotator cable pinout (confirmed)</h2>
 	<table>
 		<thead>
 			<tr>
-				<th>Wire colour (common)</th>
+				<th>Controller terminal</th>
+				<th>Wire colour</th>
+				<th>Rotator terminal</th>
 				<th>Function</th>
 			</tr>
 		</thead>
 		<tbody>
 			<tr>
-				<td>Red or White</td>
-				<td>Motor CW winding</td>
+				<td><strong>1</strong></td>
+				<td>brown/white</td>
+				<td>T1</td>
+				<td>CW winding — Relay A NO</td>
 			</tr>
 			<tr>
-				<td>Black or Blue</td>
-				<td>Motor CCW winding</td>
+				<td><strong>2</strong></td>
+				<td>blue/white</td>
+				<td>T3</td>
+				<td>CCW winding — Relay B NO</td>
 			</tr>
 			<tr>
-				<td>Green or Yellow</td>
-				<td>Motor common (neutral)</td>
+				<td><strong>3</strong></td>
+				<td>green/white</td>
+				<td>T2</td>
+				<td>Motor COM — 24 V AC wire B (direct, no relay)</td>
 			</tr>
 		</tbody>
 	</table>
-	<p><strong>Always verify with a meter before wiring.</strong> With the rotator unplugged:</p>
-	<ul>
-		<li>CW and CCW windings will read as a winding resistance (~50–200 Ω) to COM.</li>
-		<li>COM to either winding reads the same resistance. Measuring across CW→CCW reads double (series).</li>
-	</ul>
+	<blockquote>
+		<p>Wire colours verified by resistance measurement (T2 green/white reads equal resistance to both other terminals).</p>
+	</blockquote>
 	<hr>
 	<h2 id="firmware--timed-dead-reckoning">Firmware — timed dead-reckoning</h2>
 	<p>With no pot, position is inferred from motor run time. Key constants and commands:</p>
@@ -607,7 +648,10 @@
 				pin, <strong>not</strong> 3.3 V</label></li>
 		<li><input type="checkbox" id="checkbox5"><label for="checkbox5">Relay module GND shared with ESP32 GND</label>
 		</li>
-		<li><input type="checkbox" id="checkbox6"><label for="checkbox6">IN1 → GPIO 25, IN2 → GPIO 26</label></li>
+		<li><input type="checkbox" id="checkbox6"><label for="checkbox6">Relay A <code>S</code> pin → GPIO 25 (CW), Relay B <code>S</code> pin → GPIO 26 (CCW)</label></li>
+		<li><input type="checkbox" id="checkbox6b"><label for="checkbox6b">Relay A NO → controller terminal 1 (brown/white → rotator T1)</label></li>
+		<li><input type="checkbox" id="checkbox6c"><label for="checkbox6c">Relay B NO → controller terminal 2 (blue/white → rotator T3)</label></li>
+		<li><input type="checkbox" id="checkbox6d"><label for="checkbox6d">Controller terminal 3 (green/white → rotator T2) → 24 V AC wire B direct</label></li>
 		<li><input type="checkbox" id="checkbox7"><label for="checkbox7">ESP32 powered from MP1584 buck module (9 V AC
 				secondary → bridge rectifier → MP1584 → 5 V DC → ESP32 VIN), <strong>or</strong> USB</label></li>
 		<li><input type="checkbox" id="checkbox7b"><label for="checkbox7b">MP1584 output trimmer adjusted to <strong>5.0

@@ -85,37 +85,55 @@ probe one wire to ground — ~120 V = Hot, ~0 V = Neutral. Put the switch on **H
 
 ## Schematic — relay module wiring
 
+Each relay module has two connectors:
+
+**Control-side pins** (3 pins, left to right): `S` · `+` · `-`
+
+| Pin | Connect to |
+|---|---|
+| `S` (Signal) | ESP32 GPIO (LOW = relay energised) |
+| `+` (VCC)    | ESP32 5 V (VIN pin) |
+| `-` (GND)    | ESP32 GND |
+
+**Load-side terminal block** (3 screw terminals, no markings): probe with a multimeter in continuity/resistance mode **before wiring AC**:
+- With relay **de-energised** (no power): the two terminals that show continuity → that pair is **NC + COM**; the isolated terminal is **NO**.
+- With relay **energised** (power applied): continuity shifts to the other pair → confirming **NO + COM**.
+- Wire **COM** to 24 V AC hot; wire **NO** to the motor winding; leave **NC** unconnected.
+
 ```
  ┌───────────────────────────────────────────────────────┐
- │     RELAY MODULE A — CW  (5 V, active LOW)          │
+ │     RELAY MODULE A — CW  (5 V, active LOW)            │
  │                                                       │
- │  VCC ◄──── 5 V (from ESP32 5V/VIN pin)               │
- │  GND ◄──── GND                                        │
- │  IN  ◄──── GPIO 25  (LOW = relay energised)           │
+ │  Control pins (left → right):                         │
+ │   S ◄──── GPIO 25  (LOW = relay energised)            │
+ │   + ◄──── 5 V (from ESP32 VIN pin)                    │
+ │   - ◄──── GND                                         │
  │                                                       │
- │  Relay: COM ── 24 V AC hot                           │
- │         NO  ── Motor CW terminal                     │
- │         NC  ── (leave unconnected)                   │
+ │  Terminal block (probe to identify — see above):      │
+ │   COM ── 24 V AC wire A (hot side)                    │
+ │   NO  ── Controller terminal 1 (brown/white → T1)     │
+ │   NC  ── (leave unconnected)                          │
  └───────────────────────────────────────────────────────┘
 
  ┌───────────────────────────────────────────────────────┐
  │     RELAY MODULE B — CCW  (5 V, active LOW)           │
  │                                                       │
- │  VCC ◄──── 5 V (from ESP32 5V/VIN pin)               │
- │  GND ◄──── GND                                        │
- │  IN  ◄──── GPIO 26  (LOW = relay energised)           │
+ │  Control pins (left → right):                         │
+ │   S ◄──── GPIO 26  (LOW = relay energised)            │
+ │   + ◄──── 5 V (from ESP32 VIN pin)                    │
+ │   - ◄──── GND                                         │
  │                                                       │
- │  Relay: COM ── 24 V AC hot                           │
- │         NO  ── Motor CCW terminal                    │
- │         NC  ── (leave unconnected)                   │
+ │  Terminal block (probe to identify — see above):      │
+ │   COM ── 24 V AC wire A (hot side)                    │
+ │   NO  ── Controller terminal 2 (blue/white → T3)      │
+ │   NC  ── (leave unconnected)                          │
  └───────────────────────────────────────────────────────┘
 
- Motor COM ─────────────────────────────── 24 V AC neutral (transformer secondary A)
+ Controller terminal 3 (green/white → T2) ── 24 V AC wire B (direct, no relay)
 ```
 
-> Most relay modules have **active-LOW** inputs — the relay energises when
-> the ESP32 pin is pulled LOW.  The firmware handles this; see the note in
-> `main.cpp`.
+> These modules are **active-LOW** — the relay energises when the ESP32 pulls `S` LOW.
+> The firmware handles this; see the note in `main.cpp`.
 
 ---
 
@@ -134,19 +152,15 @@ The two relays do exactly that, each one switching 24 V AC to one winding.
 
 ---
 
-## Rotator cable pinout (probe with a multimeter — do not assume)
+## Rotator cable pinout (confirmed)
 
-Typical 3-wire RCA rotator cable:
+| Controller terminal | Wire colour | Rotator terminal | Function |
+|---|---|---|---|
+| **1** | brown/white | T1 | CW winding — Relay A NO |
+| **2** | blue/white  | T3 | CCW winding — Relay B NO |
+| **3** | green/white | T2 | Motor COM — 24 V AC wire B (direct, no relay) |
 
-| Wire colour (common) | Function |
-|---|---|
-| Red or White | Motor CW winding |
-| Black or Blue | Motor CCW winding |
-| Green or Yellow | Motor common (neutral) |
-
-**Always verify with a meter before wiring.**  With the rotator unplugged:
-- CW and CCW windings will read as a winding resistance (~50–200 Ω) to COM.
-- COM to either winding reads the same resistance.  Measuring across CW→CCW reads double (series).
+> Wire colours verified by resistance measurement (T2 green/white reads equal resistance to both other terminals).
 
 ---
 
@@ -193,7 +207,10 @@ void motorCCW()   { /* calls motorStop() first, then snapshots heading+time, ene
 - [ ] Motor COM wire connected to transformer secondary neutral
 - [ ] Relay module VCC connected to ESP32 5 V (VIN) pin, **not** 3.3 V
 - [ ] Relay module GND shared with ESP32 GND
-- [ ] IN1 → GPIO 25, IN2 → GPIO 26
+- [ ] Relay A `S` pin → GPIO 25 (CW), Relay B `S` pin → GPIO 26 (CCW)
+- [ ] Relay A NO → controller terminal 1 (brown/white → rotator T1)
+- [ ] Relay B NO → controller terminal 2 (blue/white → rotator T3)
+- [ ] Controller terminal 3 (green/white → rotator T2) → 24 V AC wire B direct
 - [ ] ESP32 powered from MP1584 buck module (9 V AC secondary → bridge rectifier → MP1584 → 5 V DC → ESP32 VIN), **or** USB
 - [ ] MP1584 output trimmer adjusted to **5.0 V** before connecting ESP32
 - [ ] `MS_PER_DEG` calibrated for your rotator's speed (see Calibration above)
