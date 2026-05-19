@@ -15,6 +15,9 @@
 #include <WebServer.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
+#include <LiquidCrystal_I2C.h>
+#include "soc/rtc_cntl_reg.h"  // brownout detector control
+#include "esp_system.h"          // esp_reset_reason()
 
 // ─── Pin definitions ──────────────────────────────────────────────────────────
 //  Relay module wiring (2× 1-channel, 5 V, active-LOW, optocoupler-isolated):
@@ -25,6 +28,12 @@
 #define PIN_MOTOR_CCW  25   // digital output → relay IN2 (active LOW) — returns to 0°
 //  Optional status LED (built-in on most ESP32 devkits)
 #define PIN_LED         2
+
+// ─── LCD display (1602A via I2C backpack, PCF8574) ────────────────────────────
+//  SDA = GPIO21, SCL = GPIO22 (ESP32 I2C defaults — no config needed)
+//  Address auto-detected at boot: 0x27 (PCF8574, most common) or 0x3F (PCF8574A)
+LiquidCrystal_I2C* lcd       = nullptr;  // allocated in setup() after I2C scan
+bool               lcdPresent = false;
 
 // ─── WiFi access-point credentials ───────────────────────────────────────────
 const char* AP_SSID = "OpenRotator";
@@ -39,6 +48,8 @@ float MS_PER_DEG   = 163.0f;  // milliseconds per degree of rotation — calibra
 
 // ─── Tuning knobs ─────────────────────────────────────────────────────────────
 float DEADBAND     = 4.0f;    // Stop within ±N degrees of target (increase if overshooting)
+const unsigned long RELAY_COOLDOWN_MS  = 600;   // Min ms between relay direction changes (prevents inrush brownout)
+const unsigned long NVS_HDG_INTERVAL_MS = 10000; // Min ms between NVS heading writes (throttle flash wear)
 
 // ─── Physical limits (non-circular rotator has hard stops at both ends) ──────
 //  Set these after calibrating, e.g. SETMIN 0  SETMAX 360
@@ -61,6 +72,10 @@ unsigned long lastControlMs   = 0;
 bool          timingMode      = false;   // true during TIMECW/TIMECCW calibration run
 unsigned long timingStartMs   = 0;       // millis() when timing started
 bool          freeRunMode     = false;   // true during manual CW/CCW/TIMECW/TIMECCW (no GOTO target)
+unsigned long lastRelayChangeMs = 0;     // millis() of last relay on/off transition (cooldown guard)
+unsigned long lastNvsHdgWriteMs = 0;     // millis() of last NVS heading write (throttle guard)
+unsigned long lastLcdUpdateMs   = 0;     // millis() of last LCD refresh
+String        currentTargetLabel = "";   // preset label shown on LCD during active GOTO
 Preferences   prefs;                     // NVS storage for calibration + last heading
 bool          hdgRestored     = false;   // true if heading was loaded from NVS on boot
 String        staSSID         = "";       // home WiFi SSID (empty = STA disabled)
@@ -96,12 +111,19 @@ void motorStop() {
     motorStartHdg = currentHeading;     // keep snapshot current
     rotatorStatus = "IDLE";
     digitalWrite(PIN_LED, LOW);
-    if (headingKnown) prefs.putFloat("lastheading", currentHeading);  // survive reboots
+    if (headingKnown) {
+        unsigned long now = millis();
+        if (now - lastNvsHdgWriteMs >= NVS_HDG_INTERVAL_MS) {
+            prefs.putFloat("lastheading", currentHeading);
+            lastNvsHdgWriteMs = now;
+        }
+    }
 }
 
 void motorCW() {
     motorStop();                        // de-energise + capture heading first
-    delay(20);                          // interlock: ensure relay fully opens before re-energising
+    delay(200);                         // interlock: give relay contacts and AC motor field time to collapse
+    lastRelayChangeMs = millis();
     motorStartHdg = currentHeading;
     motorStartMs  = millis();
     motorDirection = 1;
@@ -112,7 +134,8 @@ void motorCW() {
 
 void motorCCW() {
     motorStop();                        // de-energise + capture heading first
-    delay(20);                          // interlock: ensure relay fully opens before re-energising
+    delay(200);                         // interlock: give relay contacts and AC motor field time to collapse
+    lastRelayChangeMs = millis();
     motorStartHdg = currentHeading;
     motorStartMs  = millis();
     motorDirection = -1;
@@ -122,10 +145,76 @@ void motorCCW() {
 }
 
 // =============================================================================
+//  LCD — 1602A via I2C backpack (SDA=GPIO21, SCL=GPIO22)
+//  Line 1: heading + preset label (if active) or "deg" when idle
+//  Line 2: status and target
+// =============================================================================
+const unsigned long LCD_UPDATE_MS = 500;  // refresh interval (ms)
+
+void updateLCD() {
+    if (!lcdPresent || !lcd) return;
+
+    auto toDisplay = [](float phys) {
+        return fmodf(phys + HDG_OFFSET + 360.0f, 360.0f);
+    };
+
+    char line1[17], line2[17];
+
+    // Line 1 — heading; show preset label on right when a named GOTO is active
+    if (headingKnown) {
+        if (currentTargetLabel.length() > 0) {
+            snprintf(line1, sizeof(line1), "HDG:%5.1f %-6s",
+                     toDisplay(currentHeading), currentTargetLabel.c_str());
+        } else {
+            snprintf(line1, sizeof(line1), "HDG: %5.1f deg  ", toDisplay(currentHeading));
+        }
+    } else {
+        snprintf(line1, sizeof(line1), "HDG:  ---       ");
+    }
+
+    // Line 2 — motion status / target
+    const char* dirStr = (motorDirection == 1) ? "CW " : "CCW";
+    if (motorDirection != 0) {
+        if (targetHeading >= 0.0f)
+            snprintf(line2, sizeof(line2), ">%-5.1f  ROT %s ", toDisplay(targetHeading), dirStr);
+        else
+            snprintf(line2, sizeof(line2), "FREE ROT %s    ", dirStr);
+    } else if (rotatorStatus == "AT_TARGET") {
+        snprintf(line2, sizeof(line2), "AT TARGET       ");
+    } else if (rotatorStatus == "RUNAWAY") {
+        snprintf(line2, sizeof(line2), "!! RUNAWAY !!   ");
+    } else if (rotatorStatus == "LIMIT_HIT") {
+        snprintf(line2, sizeof(line2), "!! LIMIT HIT !! ");
+    } else {
+        snprintf(line2, sizeof(line2), "IDLE            ");
+    }
+
+    lcd->setCursor(0, 0);
+    lcd->print(line1);
+    lcd->setCursor(0, 1);
+    lcd->print(line2);
+}
+
+// =============================================================================
 //  Control loop  (called every 100 ms)
 // =============================================================================
 void controlLoop() {
     updateHeading();  // refresh currentHeading from elapsed motor run time
+
+    // Runaway guard — force-stop if motor has run longer than full arc + 50% margin
+    // Skips during timingMode where an intentional full-arc run is expected
+    if (motorDirection != 0 && !timingMode) {
+        unsigned long maxRunMs = (unsigned long)((HDG_MAX - HDG_MIN) * MS_PER_DEG * 1.5f);
+        if (millis() - motorStartMs > maxRunMs) {
+            motorStop();
+            freeRunMode        = false;
+            targetHeading      = -1.0f;
+            rotatorStatus      = "RUNAWAY";
+            currentTargetLabel = "";
+            Serial.println(F("ERR: RUNAWAY — motor force-stopped after exceeding max runtime."));
+            return;
+        }
+    }
 
     // Physical limit guard — stop if heading has reached an end-stop
     // CW increases heading → stop at HDG_MAX; CCW decreases heading → stop at HDG_MIN
@@ -204,32 +293,50 @@ String processCommand(const String& rawCmd) {
     cmd.toUpperCase();
 
     if (cmd == "CW") {
-        targetHeading = -1.0f;
-        freeRunMode   = true;
+        targetHeading      = -1.0f;
+        freeRunMode        = true;
+        currentTargetLabel = "";
         motorCW();
         return "OK ROTATING_CW";
     }
     if (cmd == "CCW") {
-        targetHeading = -1.0f;
-        freeRunMode   = true;
+        targetHeading      = -1.0f;
+        freeRunMode        = true;
+        currentTargetLabel = "";
         motorCCW();
         return "OK ROTATING_CCW";
     }
     if (cmd == "TIMECW") {
-        targetHeading = -1.0f;
-        freeRunMode   = true;
-        timingMode    = true;
-        timingStartMs = millis();
+        targetHeading      = -1.0f;
+        freeRunMode        = true;
+        timingMode         = true;
+        timingStartMs      = millis();
+        currentTargetLabel = "";
         motorCW();
         return "OK TIMING_CW - press STOP when done to see elapsed time";
     }
     if (cmd == "TIMECCW") {
-        targetHeading = -1.0f;
-        freeRunMode   = true;
-        timingMode    = true;
-        timingStartMs = millis();
+        targetHeading      = -1.0f;
+        freeRunMode        = true;
+        timingMode         = true;
+        timingStartMs      = millis();
+        currentTargetLabel = "";
         motorCCW();
         return "OK TIMING_CCW - press STOP when done to see elapsed time";
+    }
+    if (cmd.startsWith("HOMEDIR ")) {
+        float bearing = fmodf(cmd.substring(8).toFloat() + 360.0f, 360.0f);
+        motorStop();
+        currentHeading     = 0.0f;
+        motorStartHdg      = 0.0f;
+        headingKnown       = true;
+        hdgRestored        = false;
+        HDG_OFFSET         = bearing;
+        currentTargetLabel = "";
+        prefs.putFloat("lastheading", 0.0f);
+        prefs.putBool("hdgknown", true);
+        prefs.putFloat("hdgoffset", HDG_OFFSET);
+        return "OK HOMEDIR=" + String(bearing, 1) + "deg — CCW stop = " + String(bearing, 0) + "deg compass. GOTO enabled.";
     }
     if (cmd.startsWith("GOTO ")) {
         if (!headingKnown) return "ERR HEADING_UNKNOWN — run SETHOME first";
@@ -263,8 +370,9 @@ String processCommand(const String& rawCmd) {
             resp += " | HOME_AUTO=" + String(homePos, 0) + "deg";
         }
         }
-        freeRunMode   = false;
-        targetHeading = -1.0f;
+        freeRunMode        = false;
+        targetHeading      = -1.0f;
+        currentTargetLabel = "";
         motorStop();
         return resp;
     }
@@ -333,6 +441,25 @@ String processCommand(const String& rawCmd) {
         prefs.putFloat("hdgmax", HDG_MAX);
         return "OK HDG_MAX=" + String(HDG_MAX, 1);
     }
+    if (cmd == "RESETCAL") {
+        prefs.remove("msperdeg");
+        prefs.remove("hdgmin");
+        prefs.remove("hdgmax");
+        prefs.remove("deadband");
+        prefs.remove("hdgoffset");
+        prefs.remove("lastheading");
+        prefs.remove("hdgknown");
+        MS_PER_DEG         = 163.0f;
+        HDG_MIN            = 0.0f;
+        HDG_MAX            = 360.0f;
+        HDG_OFFSET         = 0.0f;
+        DEADBAND           = 4.0f;
+        headingKnown       = false;
+        hdgRestored        = false;
+        currentTargetLabel = "";
+        motorStop();
+        return "OK RESETCAL — calibration cleared, WiFi credentials preserved. Run HOMEDIR <bearing> or SETHOME to re-enable GOTO.";
+    }
     if (cmd == "FACTORY") {
         prefs.clear();
         MS_PER_DEG   = 163.0f;
@@ -365,9 +492,9 @@ String processCommand(const String& rawCmd) {
     }
     if (cmd == "HELP") {
         return "Commands: CW | CCW | TIMECW | TIMECCW | GOTO <deg> | STOP | STATUS | "
-               "SETHOME [deg] | MSPERDEG <val> | DEADBAND <deg> | "
+               "SETHOME [deg] | HOMEDIR <bearing> | MSPERDEG <val> | DEADBAND <deg> | "
                "SETMIN <deg> | SETMAX <deg> | SETOFFSET <deg> | PINTEST | "
-               "SETWIFI <ssid> <pass> | WIFICLEAR | WIFISTATUS | FACTORY | HELP";
+               "SETWIFI <ssid> <pass> | WIFICLEAR | WIFISTATUS | RESETCAL | FACTORY | HELP";
     }
     // PINTEST — pulse each output pin 2x so you can hear/see which relay fires
     if (cmd == "PINTEST") {
@@ -427,7 +554,7 @@ body{background:var(--p0);color:var(--p6);font-family:'Courier New',monospace;fo
 .pn::before,.pn::after{content:'';position:absolute;width:8px;height:8px;border-color:var(--p5);border-style:solid;pointer-events:none;}
 .pn::before{top:2px;left:2px;border-width:2px 0 0 2px}
 .pn::after{bottom:2px;right:2px;border-width:0 2px 2px 0}
-#pL{flex:none;width:192px}#pR{flex:1;min-width:0}
+#pL{flex:none;width:192px}#pR{flex:1;min-width:0;overflow-y:auto}
 canvas{display:block;margin:0 auto;cursor:crosshair}
 .rl-row{display:flex;gap:4px;margin-top:6px}
 .rl{flex:1;padding:3px 2px;text-align:center;font-size:11px;line-height:1.5;
@@ -500,7 +627,7 @@ button:active{background:var(--p3);color:var(--p7);box-shadow:inset 0 0 6px rgba
 .ok{color:var(--p7)!important;text-shadow:0 0 5px var(--p5)!important}
 .wn{color:var(--yw)!important;text-shadow:0 0 4px #888800!important}
 .er{color:var(--rd)!important;text-shadow:0 0 5px rgba(255,50,0,0.5)!important}
-#log{flex:1;background:var(--p0);border:1px solid var(--p3);
+#log{flex:none;height:150px;background:var(--p0);border:1px solid var(--p3);
   border-top-color:var(--p2);border-left-color:var(--p2);
   padding:4px 5px;overflow-y:auto;font-size:11px;color:var(--p6);min-height:40px;
   text-shadow:0 0 4px rgba(0,180,20,0.4);
@@ -747,7 +874,7 @@ function rndPre(){
     el.appendChild(d);
   }
 }
-function gtp(i){const ps=lps();if(ps[i])sendGotoVal(ps[i].d);}
+function gtp(i){const ps=lps();if(ps[i]){document.getElementById('ti').value=ps[i].d;sendGotoVal(ps[i].d,ps[i].l);}}
 function stp(i){
   const ps=lps(),cur=ps[i];
   const dv=parseFloat(document.getElementById('ti').value);
@@ -905,10 +1032,11 @@ async function pollStatus(){
     updDbg(d);
   }catch(e){}
 }
-async function sendGotoVal(deg){
+async function sendGotoVal(deg,label){
   if(deg<0){deg=parseFloat(document.getElementById('ti').value);if(isNaN(deg))return;}
   deg=Math.round(Math.min(hdgMax,Math.max(hdgMin,deg)));
-  try{const d=await api('/api/goto','POST',{heading:deg});lg('GOTO '+deg+'\u00b0 \u2192 '+d.result,'cl');}
+  const body={heading:deg};if(label)body.label=label;
+  try{const d=await api('/api/goto','POST',body);lg('GOTO '+deg+'\u00b0 \u2192 '+d.result,'cl');}
   catch(e){lg('GOTO error','er2');}
 }
 async function doStop(){
@@ -980,9 +1108,17 @@ void handleGoto() {
         server.send(200, "application/json", "{\"result\":\"ERR HEADING_UNKNOWN — run TIMECCW to end stop then STOP to home first\"}");
         return;
     }
-    StaticJsonDocument<64> doc;
+    StaticJsonDocument<128> doc;
     if (deserializeJson(doc, server.arg("plain"))) { server.send(400, "application/json", "{\"error\":\"bad json\"}"); return; }
     float h = doc["heading"].as<float>();
+    // Optional preset label — displayed on LCD line 1 during rotation
+    if (doc.containsKey("label")) {
+        String lbl = doc["label"].as<String>();
+        lbl.trim(); lbl.toUpperCase();
+        currentTargetLabel = lbl.substring(0, 6);
+    } else {
+        currentTargetLabel = "";
+    }
     // Input is a compass bearing; convert to physical heading by subtracting offset
     float physH = fmodf(h - HDG_OFFSET + 360.0f, 360.0f);
     physH = fmaxf(HDG_MIN, fminf(HDG_MAX, physH));  // clamp to physical limits
@@ -1016,9 +1152,15 @@ void handleStop() {
         }
     }
     resp += "}";
-    freeRunMode   = false;
-    targetHeading = -1.0f;
+    freeRunMode        = false;
+    targetHeading      = -1.0f;
+    currentTargetLabel = "";
     motorStop();
+    // Force an immediate NVS heading write on explicit STOP (bypass throttle)
+    if (headingKnown) {
+        prefs.putFloat("lastheading", currentHeading);
+        lastNvsHdgWriteMs = millis();
+    }
     server.send(200, "application/json", resp);
 }
 
@@ -1040,15 +1182,25 @@ void handleNotFound() {
 }
 
 void handleCW() {
-    targetHeading = -1.0f;
-    freeRunMode   = true;
+    if (millis() - lastRelayChangeMs < RELAY_COOLDOWN_MS) {
+        server.send(429, "application/json", "{\"result\":\"COOLDOWN\"}");
+        return;
+    }
+    targetHeading      = -1.0f;
+    freeRunMode        = true;
+    currentTargetLabel = "";
     motorCW();
     server.send(200, "application/json", "{\"result\":\"ROTATING_CW\"}");
 }
 
 void handleCCW() {
-    targetHeading = -1.0f;
-    freeRunMode   = true;
+    if (millis() - lastRelayChangeMs < RELAY_COOLDOWN_MS) {
+        server.send(429, "application/json", "{\"result\":\"COOLDOWN\"}");
+        return;
+    }
+    targetHeading      = -1.0f;
+    freeRunMode        = true;
+    currentTargetLabel = "";
     motorCCW();
     server.send(200, "application/json", "{\"result\":\"ROTATING_CCW\"}");
 }
@@ -1095,9 +1247,35 @@ void handleTimeCCW() {
 //  Setup
 // =============================================================================
 void setup() {
+    // Relay inrush current can briefly dip the rail below the ESP32 brownout
+    // threshold (~2.43 V), causing a spurious reset.  Safe to disable on USB power.
+    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+
     Serial.begin(115200);
     delay(100);
     Serial.println(F("\n\n=== nlOpenRotator ==="));
+
+    // Log reset reason — helps diagnose power/brownout issues.
+    // NOTE: brownout detector is disabled above, so ESP_RST_BROWNOUT means
+    // the hardware threshold was hit before firmware ran.  ESP_RST_POWERON
+    // after an unexpected reset means the rail fully collapsed (not a soft brownout).
+    {
+        esp_reset_reason_t reason = esp_reset_reason();
+        const char* rrStr = "UNKNOWN";
+        switch (reason) {
+            case ESP_RST_POWERON:   rrStr = "POWERON";   break;
+            case ESP_RST_EXT:      rrStr = "EXT_PIN";   break;
+            case ESP_RST_SW:       rrStr = "SOFTWARE";  break;
+            case ESP_RST_PANIC:    rrStr = "PANIC";     break;
+            case ESP_RST_INT_WDT:  rrStr = "INT_WDT";   break;
+            case ESP_RST_TASK_WDT: rrStr = "TASK_WDT";  break;
+            case ESP_RST_WDT:      rrStr = "WDT";       break;
+            case ESP_RST_BROWNOUT: rrStr = "BROWNOUT";  break;
+            case ESP_RST_SDIO:     rrStr = "SDIO";      break;
+            default: break;
+        }
+        Serial.printf("RESET REASON: %s (%d)\n", rrStr, (int)reason);
+    }
 
     // Load calibration and last known heading from NVS (survives reboots)
     prefs.begin("rotator", false);
@@ -1124,6 +1302,26 @@ void setup() {
     pinMode(PIN_MOTOR_CW,  OUTPUT);
     pinMode(PIN_MOTOR_CCW, OUTPUT);
     motorStop();
+
+    // LCD — auto-detect I2C address: tries 0x27 (PCF8574) then 0x3F (PCF8574A)
+    Wire.begin();
+    {
+        const uint8_t lcdAddrs[] = {0x27, 0x3F};
+        for (uint8_t a : lcdAddrs) {
+            Wire.beginTransmission(a);
+            if (Wire.endTransmission() == 0) {
+                lcd = new LiquidCrystal_I2C(a, 16, 2);
+                lcd->init();
+                lcd->backlight();
+                lcd->setCursor(0, 0); lcd->print("OpenRotator");
+                lcd->setCursor(0, 1); lcd->print("Initializing...");
+                lcdPresent = true;
+                Serial.printf("LCD: found at 0x%02X\n", a);
+                break;
+            }
+        }
+        if (!lcdPresent) Serial.println(F("LCD: not found (0x27/0x3F) — no display"));
+    }
 
     // WiFi — start AP first (always), then optionally join home network as STA
     WiFi.mode(staSSID.length() > 0 ? WIFI_AP_STA : WIFI_AP);
@@ -1182,11 +1380,18 @@ void setup() {
 void loop() {
     server.handleClient();
 
-    // Control loop at 100 ms intervals
     unsigned long now = millis();
+
+    // Control loop at 100 ms intervals
     if (now - lastControlMs >= 100) {
         lastControlMs = now;
         controlLoop();
+    }
+
+    // LCD refresh at LCD_UPDATE_MS intervals
+    if (now - lastLcdUpdateMs >= LCD_UPDATE_MS) {
+        lastLcdUpdateMs = now;
+        updateLCD();
     }
 
     // Serial command input (newline-terminated)

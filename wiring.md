@@ -72,9 +72,9 @@ probe one wire to ground — ~120 V = Hot, ~0 V = Neutral. Put the switch on **H
                         └───────────────────────────────-┘
 
   24 V AC secondary:
-    Hot ──► Relay A COM ── NO ──► Motor CW terminal
-         └► Relay B COM ── NO ──► Motor CCW terminal
-    Neutral ─────────────────────────────────────────► Motor COM
+    Hot ──► Relay A COM ── NO ──► Motor CW terminal (OLD BLUE/WHITE, NEW SOLID WHITE)
+         └► Relay B COM ── NO ──► Motor CCW terminal (OLD GREEN/WHITE, NEW SOLID GREEN)
+    Neutral ─────────────────────────────────────────► Motor COM (OLD BROWN/WHITE, NEW SOLID RED)
 
   9 V AC secondary:
     ──► 4× 1N4007 bridge rectifier ──► 1000 µF cap ──► MP1584 input
@@ -199,6 +199,62 @@ void motorCCW()   { /* calls motorStop() first, then snapshots heading+time, ene
 
 ---
 
+## Optional: 1602A LCD display (I2C)
+
+A 16×2 character LCD with a **PCF8574 I2C backpack** shows heading and status without
+needing the web UI or serial monitor.
+
+### Parts
+
+| Qty | Part | Notes |
+|---|---|---|
+| 1 | 1602A LCD + PCF8574 I2C backpack | Most listings have the backpack pre-soldered to the LCD |
+| — | 4 jumper wires | — |
+
+### Wiring
+
+| Backpack pin | ESP32 pin | Notes |
+|---|---|---|
+| `GND` | GND | Any GND pin |
+| `VCC` | VIN (5 V) | Backpack + LCD draw ~20–60 mA |
+| `SDA` | GPIO 21 | ESP32 default I2C SDA (unused by rest of circuit) |
+| `SCL` | GPIO 22 | ESP32 default I2C SCL (unused by rest of circuit) |
+
+```
+ESP32
+  GND          ──────────── GND  ]
+  VIN (5 V)    ──────────── VCC  ]  PCF8574 I2C backpack
+  GPIO 21 SDA  ──────────── SDA  ]  (on the back of the 1602A)
+  GPIO 22 SCL  ──────────── SCL  ]
+```
+
+> **I2C address:** Most PCF8574 backpacks default to **0x27** (A0–A2 jumper pads open).
+> Some modules use **0x3F** (PCF8574**A** chip variant).
+> If the display is blank, change `LCD_I2C_ADDR` in `main.cpp` to `0x3F` and rebuild.
+> To confirm the address without guessing, flash the standard I2C scanner example sketch —
+> it prints every detected address to the serial monitor.
+
+### Display layout
+
+```
+┌────────────────┐
+│ HDG:  123.4 deg│  ← current bearing (offset-corrected); "HDG:  ---" before SETHOME
+│ >180.0  ROT CW │  ← target + direction during a GOTO
+└────────────────┘
+```
+
+Line 2 shows one of:
+
+| Condition | Line 2 displayed |
+|---|---|
+| GOTO in progress | `>TARGET  ROT CW ` / `ROT CCW` |
+| Manual CW / CCW / TIMECW / TIMECCW | `FREE ROT CW ` / `FREE ROT CCW` |
+| Arrived at target | `AT TARGET` |
+| End stop hit | `!! LIMIT HIT !!` |
+| Stopped / idle | `IDLE` |
+
+---
+
 ## Complete wiring checklist
 
 - [ ] Transformer primary fused (original controller already has this; if using a bare transformer, add a 0.5 A fuse)
@@ -215,6 +271,8 @@ void motorCCW()   { /* calls motorStop() first, then snapshots heading+time, ene
 - [ ] MP1584 output trimmer adjusted to **5.0 V** before connecting ESP32
 - [ ] `MS_PER_DEG` calibrated for your rotator's speed (see Calibration above)
 - [ ] `SETHOME` sent after pointing antenna to a known bearing on first use
+- [ ] *(LCD — optional)* LCD VCC → ESP32 VIN (5 V), GND → GND, SDA → GPIO 21, SCL → GPIO 22
+- [ ] *(LCD — optional)* I2C address confirmed: `0x27` (default) or `0x3F` — update `LCD_I2C_ADDR` in `main.cpp` if needed
 
 ---
 
