@@ -1,117 +1,220 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>OpenRotator &mdash; USB</title>
+<title>ANT ROTATOR CTRL &mdash; USB</title>
 <style>
-:root{--ac:#4fc3f7;--bg:#0f0f1a;--cd:#16213e;--tx:#e0e0e0;--rd:#ef5350;--gn:#66bb6a}
+:root{
+  --bg:   #1A1B26;
+  --pan:  #282A36;
+  --cur:  #44475A;
+  --fg:   #F8F8F2;
+  --com:  #6272A4;
+  --red:  #FF5555;
+  --org:  #FFB86C;
+  --yel:  #F1FA8C;
+  --grn:  #50FA7B;
+  --cyn:  #8BE9FD;
+  --pur:  #BD93F9;
+  --pnk:  #FF79C6;
+}
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;overflow:hidden}
-body{background:var(--bg);color:var(--tx);font-family:monospace;display:flex;flex-direction:column}
-#hdr{flex:none;background:var(--cd);padding:5px 10px;display:flex;align-items:center;
-  gap:8px;border-bottom:1px solid #1a2a44;flex-wrap:wrap}
-#hdr h1{color:var(--ac);font-size:.9rem;letter-spacing:2px;flex:none}
-#connStatus{font-size:.72rem;flex:1;min-width:120px}
-#connStatus.connected{color:var(--gn)}
-#connStatus.disconnected{color:#556}
-.hbtn{padding:4px 10px;border:none;border-radius:5px;font-size:.72rem;cursor:pointer;
-  font-family:monospace;font-weight:bold}
-#btnConnect{background:var(--gn);color:#000}
-#btnDisconnect{background:#334;color:#aaa}
-#rb{flex:none;background:#1a0f00;border-bottom:1px solid #ff9800;color:#ffcc80;
-  padding:3px 10px;font-size:.65rem;display:none;justify-content:space-between;align-items:center}
-#rb button{background:none;border:none;color:#ff9800;cursor:pointer;font-size:.85rem}
+body{background:var(--bg);color:var(--fg);font-family:monospace;display:flex;flex-direction:column}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+#hdr{
+  flex:none;background:var(--pan);padding:5px 10px;
+  display:flex;align-items:center;gap:8px;
+  border-bottom:2px solid var(--pur);flex-wrap:wrap;
+  position:relative;
+}
+#hdr::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,var(--pnk),var(--pur),var(--cyn));
+}
+#hdr h1{color:var(--pnk);font-size:.9rem;letter-spacing:3px;flex:none;text-transform:uppercase}
+#connStatus{font-size:.72rem;flex:1;min-width:120px;letter-spacing:1px}
+#connStatus.connected{color:var(--grn)}
+#connStatus.disconnected{color:var(--cur)}
+.hbtn{
+  padding:4px 10px;border:1px solid var(--cur);border-radius:3px;
+  font-size:.72rem;cursor:pointer;font-family:monospace;font-weight:bold;
+  letter-spacing:1px;text-transform:uppercase;
+}
+#btnConnect{background:var(--grn);color:#000;border-color:var(--grn)}
+#btnDisconnect{background:var(--cur);color:var(--com);border-color:var(--com)}
+
+/* ── Restore banner ──────────────────────────────────────────────────────── */
+#rb{
+  flex:none;background:#2A1F00;border-bottom:1px solid var(--org);
+  color:var(--org);padding:3px 10px;font-size:.65rem;
+  display:none;justify-content:space-between;align-items:center;
+  letter-spacing:1px;
+}
+#rb button{background:none;border:none;color:var(--org);cursor:pointer;font-size:.85rem}
+
+/* ── Main layout ─────────────────────────────────────────────────────────── */
 #main{flex:1;display:flex;gap:5px;padding:5px;overflow:hidden;min-height:0}
-.pn{background:var(--cd);border-radius:8px;padding:8px;overflow:hidden;display:flex;flex-direction:column}
-#pL{flex:none;width:182px}#pR{flex:1;min-width:0}
+.pn{
+  background:var(--pan);border-radius:3px;padding:8px;
+  overflow:hidden;display:flex;flex-direction:column;
+  border:1px solid var(--cur);
+}
+#pL{flex:none;width:182px}
+#pR{flex:1;min-width:0}
+
+/* ── Compass ─────────────────────────────────────────────────────────────── */
 canvas{display:block;margin:0 auto;cursor:crosshair}
+
+/* ── Relay indicators ────────────────────────────────────────────────────── */
 .rl-row{display:flex;gap:4px;margin-top:5px}
-.rl{flex:1;border-radius:5px;padding:3px 2px;text-align:center;font-size:.6rem;
-  border:1px solid #2a3a5e;line-height:1.4}
-.rl.on{background:#bf360c;border-color:var(--rd);color:#ffcc80}
-.rl.off{background:#0a1628;color:#3a4a6a}
+.rl{
+  flex:1;border-radius:3px;padding:3px 2px;text-align:center;font-size:.6rem;
+  border:1px solid var(--cur);line-height:1.4;text-transform:uppercase;letter-spacing:1px;
+}
+.rl.on{background:#3A1010;border-color:var(--red);color:var(--org)}
+.rl.off{background:#1E1F29;color:var(--com);border-color:#2A2B3A}
 .rl b{display:block;font-size:.7rem}
-.stat{display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid #1e2d50;font-size:.75rem}
+
+/* ── Stats ───────────────────────────────────────────────────────────────── */
+.stat{
+  display:flex;justify-content:space-between;padding:2px 0;
+  border-bottom:1px solid #2A2B3A;font-size:.75rem;
+}
 .stat:last-child{border:none}
-.sv{color:var(--ac);font-weight:bold}
-.badge{padding:2px 7px;border-radius:10px;font-size:.65rem;font-weight:bold}
-.IDLE,.AT_TARGET{background:#1b5e20;color:#a5d6a7}
-.ROTATING_CW,.ROTATING_CCW{background:#bf360c;color:#ffcc80}
-.LIMIT_HIT{background:#4a148c;color:#e1bee7}
-.sec{font-size:.58rem;color:#3a4a6a;letter-spacing:2px;text-transform:uppercase;margin:5px 0 2px}
-input[type=number]{width:100%;padding:5px;border-radius:5px;border:1px solid #2a3a5e;
-  background:#0a1628;color:#fff;font-size:.85rem;text-align:center}
+.stat span:first-child{color:var(--com);letter-spacing:1px;font-size:.65rem;text-transform:uppercase}
+.sv{color:var(--yel);font-weight:bold;font-size:.85rem}
+
+/* ── Status badges ───────────────────────────────────────────────────────── */
+.badge{padding:2px 7px;border-radius:2px;font-size:.65rem;font-weight:bold;letter-spacing:1px;text-transform:uppercase}
+.IDLE,.AT_TARGET{background:#1A3A22;color:var(--grn);border:1px solid #2A5A33}
+.ROTATING_CW,.ROTATING_CCW{background:#2A1A00;color:var(--org);border:1px solid #4A3000}
+.LIMIT_HIT{background:#2A1A3A;color:var(--pur);border:1px solid #44275A}
+
+/* ── Section headers ─────────────────────────────────────────────────────── */
+.sec{
+  font-size:.58rem;color:var(--pnk);letter-spacing:3px;text-transform:uppercase;
+  margin:5px 0 2px;border-left:2px solid var(--pnk);padding-left:4px;
+}
+
+/* ── Inputs ──────────────────────────────────────────────────────────────── */
+input[type=number]{
+  width:100%;padding:5px;border-radius:3px;border:1px solid var(--cur);
+  background:#1E1F29;color:var(--yel);font-size:.85rem;text-align:center;
+  font-family:monospace;
+}
+input[type=number]:focus{outline:none;border-color:var(--cyn)}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
 .br{display:flex;gap:4px;margin-top:3px}
-button{flex:1;padding:6px 3px;border:none;border-radius:5px;font-size:.72rem;
-  cursor:pointer;font-family:monospace;font-weight:bold;white-space:nowrap}
+button{
+  flex:1;padding:6px 3px;border:none;border-radius:3px;font-size:.72rem;
+  cursor:pointer;font-family:monospace;font-weight:bold;white-space:nowrap;
+  text-transform:uppercase;letter-spacing:1px;
+}
 button:hover{opacity:.8}
 button:disabled{opacity:.3;cursor:not-allowed}
-#btnGoto{background:var(--ac);color:#000}
-#btnStop{background:var(--rd);color:#fff}
-#btnCW{background:#29b6f6;color:#000}#btnCCW{background:#26c6da;color:#000}
-#btnSethome{background:#ab47bc;color:#fff}
-#btnTimeCW,#btnTimeCCW{background:#ff8f00;color:#000}
+#btnGoto{background:var(--cyn);color:#000}
+#btnStop{background:var(--red);color:#000}
+#btnCW{background:var(--pur);color:#000}
+#btnCCW{background:var(--pnk);color:#000}
+#btnSethome{background:var(--grn);color:#000}
+#btnTimeCW,#btnTimeCCW{background:var(--org);color:#000}
+
+/* ── Presets ─────────────────────────────────────────────────────────────── */
 .pre-row{display:grid;grid-template-columns:repeat(4,1fr);gap:3px;margin-top:3px}
-.pre{border:1px solid #1e2d40;border-radius:4px;padding:2px;cursor:pointer;
-  font-size:.58rem;background:#0a1628;color:#3a4a6a;
-  min-height:28px;display:flex;flex-direction:column;align-items:center;justify-content:center}
-.ps{color:var(--tx);border-color:#2a4a6a;flex-direction:row;justify-content:space-between;padding:2px 4px}
-.ps:hover{border-color:var(--ac)}
+.pre{
+  border:1px solid #2A2B3A;border-radius:3px;padding:2px;cursor:pointer;
+  font-size:.58rem;background:#1E1F29;color:var(--com);
+  min-height:28px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+}
+.ps{color:var(--fg);border-color:var(--cur);flex-direction:row;justify-content:space-between;padding:2px 4px}
+.ps:hover{border-color:var(--cyn)}
 .ps .pd{text-align:left;line-height:1.3}
-.ps .pd b{display:block;color:var(--ac);font-size:.65rem}
-.ps .pe{font-size:.7rem;color:#334;cursor:pointer;padding:0 2px;flex:none}
-.ps .pe:hover{color:var(--ac)}
-#mapWrap{flex:none;border-radius:5px;overflow:hidden;position:relative;margin-bottom:3px;display:none;border:1px solid #1e2d40}
+.ps .pd b{display:block;color:var(--cyn);font-size:.65rem}
+.ps .pe{font-size:.7rem;color:var(--cur);cursor:pointer;padding:0 2px;flex:none}
+.ps .pe:hover{color:var(--pnk)}
+
+/* ── Map ─────────────────────────────────────────────────────────────────── */
+#mapWrap{
+  flex:none;border-radius:3px;overflow:hidden;position:relative;margin-bottom:3px;
+  display:none;border:1px solid var(--cur);
+}
 #mapWrap img{width:100%;height:auto;display:block}
 #mapCvs{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
-/* Debug */
+
+/* ── Debug grid ──────────────────────────────────────────────────────────── */
 .dg{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px 6px}
-.di{padding:2px 0;border-bottom:1px solid #111927;font-size:.62rem;
-  display:flex;justify-content:space-between}
-.di span:first-child{color:#5566aa}
-.dv{color:var(--ac);font-weight:bold}
-.ok{color:var(--gn)!important}.wn{color:#ffcc80!important}.er{color:var(--rd)!important}
-#log{flex:1;background:#070710;border-radius:5px;padding:5px;overflow-y:auto;
-  font-size:.62rem;color:#5a6f88;min-height:40px}
+.di{
+  padding:2px 0;border-bottom:1px solid #21222C;font-size:.62rem;
+  display:flex;justify-content:space-between;
+}
+.di span:first-child{color:var(--com)}
+.dv{color:var(--cyn);font-weight:bold}
+.ok{color:var(--grn)!important}
+.wn{color:var(--org)!important}
+.er{color:var(--red)!important}
+
+/* ── Console log ─────────────────────────────────────────────────────────── */
+#log{
+  flex:1;background:#1A1B26;border-radius:3px;border:1px solid #2A2B3A;
+  padding:5px;overflow-y:auto;font-size:.62rem;color:var(--com);min-height:40px;
+}
 #log p{margin:1px 0}
-.tx{color:#4fc3f7}.rx{color:#a5d6a7}.err{color:var(--rd)}
+.tx{color:var(--pnk)}
+.rx{color:var(--grn)}
+.err{color:var(--red)}
+
+/* ── Command row ─────────────────────────────────────────────────────────── */
 .cr{display:flex;gap:4px;margin-top:4px;flex:none}
-.cr input{flex:1;padding:5px;border-radius:5px;border:1px solid #2a3a5e;
-  background:#0a1628;color:#fff;font-size:.78rem}
-.cr button{flex:none;padding:5px 10px;background:var(--ac);color:#000;border:none;
-  border-radius:5px;cursor:pointer;font-weight:bold;font-size:.78rem;font-family:monospace}
+.cr input{
+  flex:1;padding:5px;border-radius:3px;border:1px solid var(--cur);
+  background:#1A1B26;color:var(--fg);font-size:.78rem;font-family:monospace;
+}
+.cr input:focus{outline:none;border-color:var(--cyn)}
+.cr button{
+  flex:none;padding:5px 10px;background:var(--cyn);color:#000;border:none;
+  border-radius:3px;cursor:pointer;font-weight:bold;font-size:.78rem;font-family:monospace;
+}
+
+/* ── Log bar ─────────────────────────────────────────────────────────────── */
 .lbar{display:flex;justify-content:space-between;align-items:center;flex:none}
-.lb{padding:1px 7px;font-size:.58rem;background:#1e2d50;color:#6677aa;border:none;
-  border-radius:3px;cursor:pointer;font-family:monospace}
+.lb{
+  padding:1px 7px;font-size:.58rem;background:#1E1F29;color:var(--com);
+  border:1px solid var(--cur);border-radius:2px;cursor:pointer;font-family:monospace;
+  text-transform:uppercase;letter-spacing:1px;
+}
+.lb:hover{color:var(--fg);border-color:var(--cyn)}
 </style>
 </head>
 <body>
 <div id="hdr">
-  <h1>&#x2316; OPEN ROTATOR <span style="font-size:.65rem;color:#445">USB</span></h1>
-  <span id="connStatus" class="disconnected">&#9679; Not connected</span>
+  <h1>&#x2296; ANT ROTATOR <span style="font-size:.55rem;color:var(--com);letter-spacing:1px">&#x25C8; USB</span></h1>
+  <span id="connStatus" class="disconnected">&#9679; OFFLINE</span>
   <span id="sts2"><span class="badge IDLE">IDLE</span></span>
   <button class="hbtn" id="btnConnect"    onclick="connectSerial()">Connect</button>
   <button class="hbtn" id="btnDisconnect" onclick="disconnectSerial()" disabled>Disconnect</button>
 </div>
 <div id="rb">
-  &#9888; Heading restored from saved state &mdash; verify antenna position before using GOTO
+  &#9888;&nbsp;HEADING RESTORED FROM SAVED STATE &mdash; VERIFY ANTENNA POSITION BEFORE GOTO
   <button onclick="dismissRb()">&#x2715;</button>
 </div>
 <div id="main">
   <div class="pn" id="pL">
     <canvas id="cmp" width="166" height="166" title="Click to set target heading"></canvas>
     <div class="rl-row">
-      <div class="rl off" id="relayA">CW<b id="rAs">OFF</b></div>
-      <div class="rl off" id="relayB">CCW<b id="rBs">OFF</b></div>
+      <div class="rl off" id="relayA">CW <b id="rAs">OFF</b></div>
+      <div class="rl off" id="relayB">CCW <b id="rBs">OFF</b></div>
     </div>
     <div style="margin-top:6px">
-      <div class="stat"><span>Heading</span><span class="sv" id="hdg">---&deg;</span></div>
+      <div class="stat"><span>Bearing</span><span class="sv" id="hdg">---&deg;</span></div>
       <div class="stat"><span>Target</span><span class="sv" id="tgt">---&deg;</span></div>
     </div>
   </div>
   <div class="pn" id="pR">
-    <div class="sec">Navigate</div>
+    <div class="sec">&#x25B8; AZ Control</div>
     <input type="number" id="ti" value="0">
     <div class="br">
       <button id="btnGoto"    onclick="sendGoto()"          disabled>GOTO</button>
@@ -124,11 +227,13 @@ button:disabled{opacity:.3;cursor:not-allowed}
       <button id="btnTimeCW"  onclick="doTimeCW()"           disabled>&#9201;&nbsp;T-CW</button>
       <button id="btnTimeCCW" onclick="doTimeCCW()"          disabled>&#9201;&nbsp;T-CCW</button>
     </div>
-    <div class="sec">Presets <span style="font-size:.5rem;color:#334">(click=GOTO &nbsp;&#x270E;=edit)</span></div>
+    <div class="sec" style="display:flex;align-items:center;justify-content:space-between;border-left:none;padding-left:0">
+      <span style="border-left:2px solid var(--pnk);padding-left:4px">&#x25B8; Stored BRG <span style="font-size:.5rem;color:var(--cur)">(click=GOTO &nbsp;&#x270E;=edit)</span></span>
+    </div>
     <div class="pre-row" id="prs"></div>
 
-    <div class="sec" style="display:flex;align-items:center;justify-content:space-between;flex:none">
-      <span>Area Map</span>
+    <div class="sec" style="display:flex;align-items:center;justify-content:space-between;border-left:none;padding-left:0;flex:none">
+      <span style="border-left:2px solid var(--pnk);padding-left:4px">&#x25B8; Area Map</span>
       <button class="lb" id="btnMapTog" onclick="toggleMap()">Show</button>
     </div>
     <div id="mapWrap">
@@ -137,7 +242,7 @@ button:disabled{opacity:.3;cursor:not-allowed}
       <canvas id="mapCvs"></canvas>
     </div>
 
-    <div class="sec">Debug</div>
+    <div class="sec">&#x25B8; Diagnostic</div>
     <div class="dg">
       <div class="di"><span>Runtime</span><span class="dv" id="dRunMs">0ms</span></div>
       <div class="di"><span>Uptime</span><span class="dv" id="dUp">---</span></div>
@@ -149,7 +254,7 @@ button:disabled{opacity:.3;cursor:not-allowed}
       <div class="di"><span>Max&nbsp;Hdg</span><span class="dv" id="dMx">360&deg;</span></div>
     </div>
     <div class="lbar" style="margin-top:5px">
-      <span class="sec" style="margin:0">Console</span>
+      <span class="sec" style="margin:0">&#x25B8; Comm Log</span>
       <div style="display:flex;gap:4px">
         <button class="lb" onclick="clearLog()">Clear</button>
         <button class="lb" onclick="exportLog()">Export</button>
@@ -196,25 +301,25 @@ function drawCompass(h, t) {
   const c = document.getElementById('cmp').getContext('2d');
   c.clearRect(0, 0, W, W);
   c.beginPath(); c.arc(CX, CY, R, 0, Math.PI*2);
-  c.fillStyle = '#070710'; c.fill();
-  c.strokeStyle = '#223355'; c.lineWidth = 2; c.stroke();
+  c.fillStyle = '#1A1B26'; c.fill();
+  c.strokeStyle = '#44475A'; c.lineWidth = 2; c.stroke();
   if (hdgMax - hdgMin < 355) {
     const sa = ((hdgMax - 90 + 720) % 360) * Math.PI / 180;
     const ea = ((hdgMin - 90 + 720) % 360) * Math.PI / 180;
     c.beginPath(); c.moveTo(CX, CY); c.arc(CX, CY, R - 1, sa, ea); c.closePath();
-    c.fillStyle = 'rgba(8,8,20,.85)'; c.fill();
+    c.fillStyle = 'rgba(26,27,38,.85)'; c.fill();
     [hdgMin, hdgMax].forEach(d => {
       const a = (d - 90) * Math.PI / 180;
       c.beginPath();
       c.moveTo(CX + 62*Math.cos(a), CY + 62*Math.sin(a));
       c.lineTo(CX + 75*Math.cos(a), CY + 75*Math.sin(a));
-      c.strokeStyle = '#ff9800'; c.lineWidth = 3; c.stroke();
+      c.strokeStyle = '#FFB86C'; c.lineWidth = 3; c.stroke();
     });
   }
   if (t >= 0 && Math.abs(h - t) > 0.5) {
     const sA = (h - 90) * Math.PI / 180, eA = (t - 90) * Math.PI / 180;
     c.beginPath(); c.arc(CX, CY, 70, sA, eA, t < h);
-    c.strokeStyle = t < h ? 'rgba(38,198,218,.55)' : 'rgba(76,195,247,.55)';
+    c.strokeStyle = t < h ? 'rgba(189,147,249,.55)' : 'rgba(139,233,253,.55)';
     c.lineWidth = 4; c.stroke();
   }
   for (let i = 0; i < 72; i++) {
@@ -222,10 +327,10 @@ function drawCompass(h, t) {
     c.beginPath();
     c.moveTo(CX + (big?57:med?61:64)*Math.cos(a), CY + (big?57:med?61:64)*Math.sin(a));
     c.lineTo(CX + 74*Math.cos(a), CY + 74*Math.sin(a));
-    c.strokeStyle = big ? '#4fc3f7' : med ? '#334466' : '#1e2d50';
+    c.strokeStyle = big ? '#8BE9FD' : med ? '#44475A' : '#383A4A';
     c.lineWidth = big ? 2 : 1; c.stroke();
   }
-  [['N',0,'#ef5350'],['E',90,'#777'],['S',180,'#777'],['W',270,'#777']].forEach(([l,d,col]) => {
+  [['N',0,'#FF79C6'],['E',90,'#6272A4'],['S',180,'#6272A4'],['W',270,'#6272A4']].forEach(([l,d,col]) => {
     const a = (d - 90) * Math.PI / 180;
     c.fillStyle = col; c.font = 'bold 10px monospace';
     c.textAlign = 'center'; c.textBaseline = 'middle';
@@ -235,18 +340,18 @@ function drawCompass(h, t) {
     const ta = (t - 90) * Math.PI / 180;
     c.beginPath(); c.moveTo(CX, CY);
     c.lineTo(CX + R*.78*Math.cos(ta), CY + R*.78*Math.sin(ta));
-    c.strokeStyle = 'rgba(255,200,0,.5)'; c.lineWidth = 2;
+    c.strokeStyle = 'rgba(241,250,140,.55)'; c.lineWidth = 2;
     c.setLineDash([3,3]); c.stroke(); c.setLineDash([]);
   }
   const na = (h - 90) * Math.PI / 180;
   c.beginPath(); c.moveTo(CX - 15*Math.cos(na), CY - 15*Math.sin(na)); c.lineTo(CX, CY);
-  c.strokeStyle = '#555'; c.lineWidth = 3; c.stroke();
+  c.strokeStyle = '#44475A'; c.lineWidth = 3; c.stroke();
   c.beginPath(); c.moveTo(CX, CY);
   c.lineTo(CX + 58*Math.cos(na), CY + 58*Math.sin(na));
-  c.strokeStyle = '#ef5350'; c.lineWidth = 3; c.stroke();
+  c.strokeStyle = '#FF5555'; c.lineWidth = 3; c.stroke();
   c.beginPath(); c.arc(CX, CY, 5, 0, Math.PI*2);
-  c.fillStyle = '#4fc3f7'; c.fill();
-  c.fillStyle = '#fff'; c.font = 'bold 12px monospace';
+  c.fillStyle = '#8BE9FD'; c.fill();
+  c.fillStyle = '#F8F8F2'; c.font = 'bold 12px monospace';
   c.textAlign = 'center'; c.textBaseline = 'middle';
   c.fillText(Math.round(h) + '\u00b0', CX, CY + 20);
 }
@@ -295,8 +400,8 @@ function rndPre() {
                   + '<span class="pe" onclick="stp(' + i + ')" title="Edit">&#x270E;</span>';
     } else {
       d.className = 'pre';
-      d.innerHTML = '<span style="color:#334;text-align:center" onclick="stp(' + i + ')">'
-                  + 'P' + (i+1) + '<b style="display:block;color:#1e2d40;font-size:.7rem">+</b></span>';
+      d.innerHTML = '<span style="color:var(--cur);text-align:center" onclick="stp(' + i + ')">'
+                  + 'P' + (i+1) + '<b style="display:block;color:#2A2B3A;font-size:.7rem">+</b></span>';
     }
     el.appendChild(d);
   }
@@ -333,43 +438,43 @@ function drawMapOverlay(){
   [50,100,150,200].forEach(mi=>{
     const r=mi*pxMi;
     c.beginPath();c.arc(hx,hy,r,0,Math.PI*2);
-    c.strokeStyle='rgba(79,195,247,0.3)';c.lineWidth=1;c.setLineDash([5,4]);c.stroke();c.setLineDash([]);
+    c.strokeStyle='rgba(139,233,253,0.3)';c.lineWidth=1;c.setLineDash([5,4]);c.stroke();c.setLineDash([]);
     const rx=hx+r*0.707,ry=hy-r*0.707;
     c.lineWidth=2;c.strokeStyle='rgba(0,0,0,0.7)';
     c.font='bold 9px monospace';c.textAlign='left';c.textBaseline='middle';
-    c.strokeText(mi+'mi',rx+1,ry+1);c.fillStyle='rgba(79,195,247,0.85)';c.fillText(mi+'mi',rx,ry);
+    c.strokeText(mi+'mi',rx+1,ry+1);c.fillStyle='rgba(139,233,253,0.85)';c.fillText(mi+'mi',rx,ry);
   });
   // City markers
   MAP_CITIES.forEach(([name,lat,lon])=>{
     const[cx,cy]=ll2px(lat,lon,W,H);
     const d=distMi(MAP_LAT,MAP_LON,lat,lon).toFixed(0)+'mi';
     c.beginPath();c.arc(cx,cy,4,0,Math.PI*2);
-    c.fillStyle='#4fc3f7';c.fill();c.strokeStyle='#000d1a';c.lineWidth=1.5;c.stroke();
+    c.fillStyle='#8BE9FD';c.fill();c.strokeStyle='#1A1B26';c.lineWidth=1.5;c.stroke();
     c.font='bold 10px monospace';c.textAlign='left';c.textBaseline='bottom';
     c.lineWidth=3;c.strokeStyle='rgba(0,0,0,0.85)';
-    c.strokeText(name,cx+6,cy);c.fillStyle='#fff';c.fillText(name,cx+6,cy);
+    c.strokeText(name,cx+6,cy);c.fillStyle='#F8F8F2';c.fillText(name,cx+6,cy);
     c.font='9px monospace';c.lineWidth=2;
-    c.strokeText(d,cx+6,cy+11);c.fillStyle='#ffd54f';c.fillText(d,cx+6,cy+11);
+    c.strokeText(d,cx+6,cy+11);c.fillStyle='#F1FA8C';c.fillText(d,cx+6,cy+11);
   });
   // Beam line
   const rad=displayHeading*Math.PI/180,blen=Math.hypot(W,H);
   c.beginPath();c.moveTo(hx,hy);c.lineTo(hx+blen*Math.sin(rad),hy-blen*Math.cos(rad));
-  c.strokeStyle='rgba(239,83,80,0.9)';c.lineWidth=2;c.setLineDash([]);c.stroke();
+  c.strokeStyle='rgba(255,85,85,0.9)';c.lineWidth=2;c.setLineDash([]);c.stroke();
   // Heading label 45px along beam
   const lx=hx+45*Math.sin(rad),ly=hy-45*Math.cos(rad);
   c.font='bold 12px monospace';c.textAlign='center';c.textBaseline='middle';
   c.lineWidth=3;c.strokeStyle='rgba(0,0,0,0.9)';
   const ht=Math.round(displayHeading)+'\u00b0';
-  c.strokeText(ht,lx,ly);c.fillStyle='#ef5350';c.fillText(ht,lx,ly);
+  c.strokeText(ht,lx,ly);c.fillStyle='#FF5555';c.fillText(ht,lx,ly);
   // Home marker
   c.beginPath();c.arc(hx,hy,7,0,Math.PI*2);
-  c.fillStyle='#4fc3f7';c.fill();c.strokeStyle='#fff';c.lineWidth=2;c.stroke();
+  c.fillStyle='#8BE9FD';c.fill();c.strokeStyle='#F8F8F2';c.lineWidth=2;c.stroke();
   c.beginPath();c.moveTo(hx-13,hy);c.lineTo(hx+13,hy);c.moveTo(hx,hy-13);c.lineTo(hx,hy+13);
-  c.strokeStyle='rgba(79,195,247,0.75)';c.lineWidth=1;c.stroke();
+  c.strokeStyle='rgba(139,233,253,0.75)';c.lineWidth=1;c.stroke();
   // North indicator
   c.font='bold 10px monospace';c.textAlign='center';c.textBaseline='bottom';
   c.lineWidth=2;c.strokeStyle='rgba(0,0,0,0.7)';
-  c.strokeText('N',hx,hy-16);c.fillStyle='#ef5350';c.fillText('N',hx,hy-16);
+  c.strokeText('N',hx,hy-16);c.fillStyle='#FF79C6';c.fillText('N',hx,hy-16);
 }
 function toggleMap() {
   mapOpen = !mapOpen;
@@ -522,7 +627,7 @@ async function disconnectSerial() {
 
 function setConnected(c) {
   const s = document.getElementById('connStatus');
-  s.textContent = c ? '\u25cf Connected' : '\u25cf Not connected';
+  s.textContent = c ? '\u25cf ONLINE' : '\u25cf OFFLINE';
   s.className   = c ? 'connected' : 'disconnected';
   ['btnGoto','btnStop','btnCW','btnCCW','btnSethome','btnSend','btnTimeCW','btnTimeCCW'].forEach(id => {
     document.getElementById(id).disabled = !c;
@@ -561,7 +666,7 @@ function startReadLoop() {
       clearInterval(window._pollInterval);
       if (writer) { writer.releaseLock(); writer = null; }
       const cs = document.getElementById('connStatus');
-      cs.textContent = '\u25cf Reconnecting\u2026'; cs.className = 'disconnected';
+      cs.textContent = '\u25cf RECONNECTING\u2026'; cs.className = 'disconnected';
       log('Connection lost \u2014 retrying in 2s\u2026', 'err');
       setTimeout(tryReconnect, 2000);
     }
