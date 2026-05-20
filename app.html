@@ -222,8 +222,8 @@ button:disabled{opacity:.3;cursor:not-allowed}
       <button id="btnSethome" onclick="setHome()"            disabled>HOME</button>
     </div>
     <div class="br" style="margin-top:4px">
-      <button id="btnCW"      onclick="sendCmd('CW')"        disabled>&#9664;&nbsp;CW</button>
-      <button id="btnCCW"     onclick="sendCmd('CCW')"       disabled>CCW&nbsp;&#9654;</button>
+      <button id="btnCW"      onclick="doCW()"               disabled>&#9664;&nbsp;CW</button>
+      <button id="btnCCW"     onclick="doCCW()"              disabled>CCW&nbsp;&#9654;</button>
       <button id="btnTimeCW"  onclick="doTimeCW()"           disabled>&#9201;&nbsp;T-CW</button>
       <button id="btnTimeCCW" onclick="doTimeCCW()"          disabled>&#9201;&nbsp;T-CCW</button>
     </div>
@@ -738,6 +738,9 @@ function sendRaw() {
 
 function doTimeCW()  { sendCmd('TIMECW'); }
 function doTimeCCW() { sendCmd('TIMECCW'); }
+
+async function doCW()  { await sendCmd('STOP'); await sendCmd('CW'); }
+async function doCCW() { await sendCmd('STOP'); await sendCmd('CCW'); }
 
 // =============================================================================
 //  Init

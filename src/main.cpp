@@ -712,8 +712,8 @@ button:active{background:var(--bdr);color:var(--fg);box-shadow:inset 0 0 6px rgb
       <button id="bHm" onclick="doSethome()">HOME</button>
     </div>
     <div class="br" style="margin-top:4px">
-      <button id="bCW"  onclick="doPost('/api/cw','CW')">&#9664;&nbsp;CW</button>
-      <button id="bCC"  onclick="doPost('/api/ccw','CCW')">CCW&nbsp;&#9654;</button>
+      <button id="bCW"  onclick="doCW()">&#9664;&nbsp;CW</button>
+      <button id="bCC"  onclick="doCCW()">CCW&nbsp;&#9654;</button>
       <button id="bTC"  onclick="doPost('/api/timecw','TIMECW')">&#9201;&nbsp;T-CW</button>
       <button id="bTCC" onclick="doPost('/api/timeccw','TIMECCW')">&#9201;&nbsp;T-CCW</button>
     </div>
@@ -1048,6 +1048,14 @@ async function doStop(){
   }catch(e){}
 }
 async function doPost(url,label){try{const d=await api(url,'POST');lg(label+' \u2192 '+d.result,'cl');}catch(e){}}
+async function doCW(){
+  try{await api('/api/stop','POST');lg('STOP \u2192 OK','cl');}catch(e){}
+  try{const d=await api('/api/cw','POST');lg('CW \u2192 '+d.result,'cl');}catch(e){}
+}
+async function doCCW(){
+  try{await api('/api/stop','POST');lg('STOP \u2192 OK','cl');}catch(e){}
+  try{const d=await api('/api/ccw','POST');lg('CCW \u2192 '+d.result,'cl');}catch(e){}
+}
 async function doSethome(){
   const deg=parseInt(document.getElementById('ti').value,10);
   const val=isNaN(deg)?0:Math.min(hdgMax,Math.max(hdgMin,deg));
@@ -1190,26 +1198,18 @@ void handleNotFound() {
 }
 
 void handleCW() {
-    if (millis() - lastRelayChangeMs < RELAY_COOLDOWN_MS) {
-        jSend(429, "{\"result\":\"COOLDOWN\"}");
-        return;
-    }
     targetHeading      = -1.0f;
     freeRunMode        = true;
     currentTargetLabel = "";
-    motorCW();
+    motorCW();  // motorCW() calls motorStop() + delay(200) interlock internally
     jSend(200, "{\"result\":\"ROTATING_CW\"}");
 }
 
 void handleCCW() {
-    if (millis() - lastRelayChangeMs < RELAY_COOLDOWN_MS) {
-        jSend(429, "{\"result\":\"COOLDOWN\"}");
-        return;
-    }
     targetHeading      = -1.0f;
     freeRunMode        = true;
     currentTargetLabel = "";
-    motorCCW();
+    motorCCW();  // motorCCW() calls motorStop() + delay(200) interlock internally
     jSend(200, "{\"result\":\"ROTATING_CCW\"}");
 }
 
