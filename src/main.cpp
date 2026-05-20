@@ -1074,7 +1074,16 @@ setInterval(()=>{
 // =============================================================================
 //  Web server handlers
 // =============================================================================
+// Always add Connection:close so the ESP32 LwIP TCP stack doesn't accumulate
+// sockets in TIME_WAIT — without this, 500 ms polling exhausts the PCB table
+// and the web interface goes dead without a reboot.
+static void jSend(int code, const String& body, const char* ct = "application/json") {
+    server.sendHeader("Connection", "close");
+    server.send(code, ct, body);
+}
+
 void handleRoot() {
+    server.sendHeader("Connection", "close");
     server.send_P(200, "text/html", INDEX_HTML);
 }
 
@@ -1099,17 +1108,17 @@ void handleStatus() {
     doc["hdgRestored"]  = hdgRestored;
     String json;
     serializeJson(doc, json);
-    server.send(200, "application/json", json);
+    jSend(200, json);
 }
 
 void handleGoto() {
-    if (!server.hasArg("plain")) { server.send(400, "application/json", "{\"error\":\"no body\"}"); return; }
+    if (!server.hasArg("plain")) { jSend(400, "{\"error\":\"no body\"}"); return; }
     if (!headingKnown) {
-        server.send(200, "application/json", "{\"result\":\"ERR HEADING_UNKNOWN — run TIMECCW to end stop then STOP to home first\"}");
+        jSend(200, "{\"result\":\"ERR HEADING_UNKNOWN — run TIMECCW to end stop then STOP to home first\"}");
         return;
     }
     StaticJsonDocument<128> doc;
-    if (deserializeJson(doc, server.arg("plain"))) { server.send(400, "application/json", "{\"error\":\"bad json\"}"); return; }
+    if (deserializeJson(doc, server.arg("plain"))) { jSend(400, "{\"error\":\"bad json\"}"); return; }
     float h = doc["heading"].as<float>();
     // Optional preset label — displayed on LCD line 1 during rotation
     if (doc.containsKey("label")) {
@@ -1124,8 +1133,7 @@ void handleGoto() {
     physH = fmaxf(HDG_MIN, fminf(HDG_MAX, physH));  // clamp to physical limits
     freeRunMode   = false;
     targetHeading = physH;
-    server.send(200, "application/json",
-        "{\"result\":\"OK\",\"target\":" + String(h, 1) + "}");
+    jSend(200, "{\"result\":\"OK\",\"target\":" + String(h, 1) + "}");
 }
 
 void handleStop() {
@@ -1161,48 +1169,48 @@ void handleStop() {
         prefs.putFloat("lastheading", currentHeading);
         lastNvsHdgWriteMs = millis();
     }
-    server.send(200, "application/json", resp);
+    jSend(200, resp);
 }
 
 void handleCommand() {
-    if (!server.hasArg("plain")) { server.send(400); return; }
+    if (!server.hasArg("plain")) { jSend(400, ""); return; }
     StaticJsonDocument<96> doc;
-    if (deserializeJson(doc, server.arg("plain"))) { server.send(400); return; }
+    if (deserializeJson(doc, server.arg("plain"))) { jSend(400, ""); return; }
     String cmd    = doc["cmd"].as<String>();
     String result = processCommand(cmd);
     StaticJsonDocument<384> resp;
     resp["result"] = result;
     String json;
     serializeJson(resp, json);
-    server.send(200, "application/json", json);
+    jSend(200, json);
 }
 
 void handleNotFound() {
-    server.send(404, "text/plain", "Not found");
+    jSend(404, "Not found", "text/plain");
 }
 
 void handleCW() {
     if (millis() - lastRelayChangeMs < RELAY_COOLDOWN_MS) {
-        server.send(429, "application/json", "{\"result\":\"COOLDOWN\"}");
+        jSend(429, "{\"result\":\"COOLDOWN\"}");
         return;
     }
     targetHeading      = -1.0f;
     freeRunMode        = true;
     currentTargetLabel = "";
     motorCW();
-    server.send(200, "application/json", "{\"result\":\"ROTATING_CW\"}");
+    jSend(200, "{\"result\":\"ROTATING_CW\"}");
 }
 
 void handleCCW() {
     if (millis() - lastRelayChangeMs < RELAY_COOLDOWN_MS) {
-        server.send(429, "application/json", "{\"result\":\"COOLDOWN\"}");
+        jSend(429, "{\"result\":\"COOLDOWN\"}");
         return;
     }
     targetHeading      = -1.0f;
     freeRunMode        = true;
     currentTargetLabel = "";
     motorCCW();
-    server.send(200, "application/json", "{\"result\":\"ROTATING_CCW\"}");
+    jSend(200, "{\"result\":\"ROTATING_CCW\"}");
 }
 
 void handleSethome() {
@@ -1221,8 +1229,7 @@ void handleSethome() {
     hdgRestored    = false;
     prefs.putFloat("lastheading", deg);
     prefs.putBool("hdgknown", true);
-    server.send(200, "application/json",
-        "{\"result\":\"HOME_SET=" + String(deg, 1) + "\"}");
+    jSend(200, "{\"result\":\"HOME_SET=" + String(deg, 1) + "\"}");
 }
 
 void handleTimeCW() {
@@ -1231,7 +1238,7 @@ void handleTimeCW() {
     timingMode    = true;
     timingStartMs = millis();
     motorCW();
-    server.send(200, "application/json", "{\"result\":\"TIMING_CW\"}" );
+    jSend(200, "{\"result\":\"TIMING_CW\"}");
 }
 
 void handleTimeCCW() {
@@ -1240,7 +1247,7 @@ void handleTimeCCW() {
     timingMode    = true;
     timingStartMs = millis();
     motorCCW();
-    server.send(200, "application/json", "{\"result\":\"TIMING_CCW\"}");
+    jSend(200, "{\"result\":\"TIMING_CCW\"}");
 }
 
 // =============================================================================
