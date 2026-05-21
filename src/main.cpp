@@ -78,6 +78,7 @@ unsigned long lastLcdUpdateMs   = 0;     // millis() of last LCD refresh
 String        currentTargetLabel = "";   // preset label shown on LCD during active GOTO
 Preferences   prefs;                     // NVS storage for calibration + last heading
 bool          hdgRestored     = false;   // true if heading was loaded from NVS on boot
+bool          prefsReady      = false;   // true once prefs.begin() has been called in setup()
 String        staSSID         = "";       // home WiFi SSID (empty = STA disabled)
 String        staPass         = "";       // home WiFi password
 bool          staConnected    = false;    // true once STA link is up
@@ -105,6 +106,9 @@ void updateHeading() {
 // =============================================================================
 void motorStop() {
     updateHeading();                    // capture final position before stopping
+    if (prefsReady && motorDirection != 0) {
+        prefs.putBool("motordirty", false); // clean stop — heading is valid
+    }
     motorDirection = 0;
     digitalWrite(PIN_MOTOR_CW,  HIGH);  // HIGH = relay off (active-LOW module)
     digitalWrite(PIN_MOTOR_CCW, HIGH);
@@ -123,6 +127,11 @@ void motorStop() {
 void motorCW() {
     motorStop();                        // de-energise + capture heading first
     delay(200);                         // interlock: give relay contacts and AC motor field time to collapse
+    if (prefsReady && headingKnown) {
+        prefs.putFloat("lastheading", currentHeading); // snapshot position before moving
+        prefs.putBool("motordirty",  true);            // mark motor as running
+        lastNvsHdgWriteMs = millis();
+    }
     lastRelayChangeMs = millis();
     motorStartHdg = currentHeading;
     motorStartMs  = millis();
@@ -135,6 +144,11 @@ void motorCW() {
 void motorCCW() {
     motorStop();                        // de-energise + capture heading first
     delay(200);                         // interlock: give relay contacts and AC motor field time to collapse
+    if (prefsReady && headingKnown) {
+        prefs.putFloat("lastheading", currentHeading); // snapshot position before moving
+        prefs.putBool("motordirty",  true);            // mark motor as running
+        lastNvsHdgWriteMs = millis();
+    }
     lastRelayChangeMs = millis();
     motorStartHdg = currentHeading;
     motorStartMs  = millis();
@@ -200,6 +214,15 @@ void updateLCD() {
 // =============================================================================
 void controlLoop() {
     updateHeading();  // refresh currentHeading from elapsed motor run time
+
+    // Persist heading every 3 s while rotating (reduces worst-case NVS lag on power loss)
+    if (prefsReady && headingKnown && motorDirection != 0) {
+        unsigned long now = millis();
+        if (now - lastNvsHdgWriteMs >= 3000UL) {
+            prefs.putFloat("lastheading", currentHeading);
+            lastNvsHdgWriteMs = now;
+        }
+    }
 
     // Runaway guard — force-stop if motor has run longer than full arc + 50% margin
     // Skips during timingMode where an intentional full-arc run is expected
@@ -449,6 +472,7 @@ String processCommand(const String& rawCmd) {
         prefs.remove("hdgoffset");
         prefs.remove("lastheading");
         prefs.remove("hdgknown");
+        prefs.remove("motordirty");
         MS_PER_DEG         = 163.0f;
         HDG_MIN            = 0.0f;
         HDG_MAX            = 360.0f;
@@ -620,7 +644,7 @@ button:active{background:var(--bdr);color:var(--fg);box-shadow:inset 0 0 6px rgb
 #mapWrap{flex:none;overflow:hidden;position:relative;margin-bottom:3px;display:none;
   border:1px solid var(--bdr);box-shadow:0 0 8px rgba(139,233,253,0.08);}
 #mapWrap img{width:100%;height:auto;display:block;filter:sepia(0.2) saturate(0.7) brightness(0.75)}
-#mapCvs{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
+#mapCvs{position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair}
 .dg{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px 6px}
 .di{padding:2px 0;border-bottom:1px solid var(--b2);font-size:11px;display:flex;justify-content:space-between;letter-spacing:.5px;}
 .di span:first-child{color:var(--com);text-transform:uppercase}
@@ -770,6 +794,7 @@ let heading=0,target=-1,hdgMin=0,hdgMax=360;
 let displayHeading=0,animId=null;
 let cmdHist=[],cmdIdx=-1,restoredDismissed=false;
 let mapOpen=false;
+let mapCityHits=[];
 // QTH: 847 Townhill Rd, Taylorsville KY 40071
 const MAP_LAT=38.0344609,MAP_LON=-85.3316739;
 const MAP_W=-87.5,MAP_E=-83.2,MAP_S=36.5,MAP_N=40.0;
@@ -938,10 +963,13 @@ function drawMapOverlay(){
     c.fillStyle='rgba(139,233,253,0.9)';c.shadowColor='rgba(139,233,253,0.5)';c.shadowBlur=3;
     c.fillText(mi+'mi',rx,ry);c.shadowBlur=0;
   });
+  mapCityHits=[];
   MAP_CITIES.forEach(([name,lat,lon])=>{
     const[cx,cy]=ll2px(lat,lon,W,H);
     const d=distMi(MAP_LAT,MAP_LON,lat,lon).toFixed(0)+'mi';
-    const brg=bearingDeg(MAP_LAT,MAP_LON,lat,lon).toFixed(0)+'\u00b0';
+    const brgNum=Math.round(bearingDeg(MAP_LAT,MAP_LON,lat,lon));
+    const brg=brgNum+'\u00b0';
+    mapCityHits.push({name,brg:brgNum,cx,cy});
     c.beginPath();c.arc(cx,cy,4,0,Math.PI*2);
     c.fillStyle='#8BE9FD';c.fill();c.strokeStyle='#1A1B26';c.lineWidth=1.5;c.stroke();
     c.font='bold 10px monospace';c.textAlign='left';c.textBaseline='bottom';
@@ -1067,6 +1095,20 @@ async function dc(){
   try{const d=await api('/api/command','POST',{cmd:cmd});lg('> '+cmd,'cl');lg(d.result);}
   catch(e){lg('ERR: '+e,'er2');}
 }
+// Map city click/hover
+(function(){
+  const cvs=document.getElementById('mapCvs');
+  function cityAt(e){
+    const r=cvs.getBoundingClientRect(),sx=cvs.width/r.width,sy=cvs.height/r.height;
+    const mx=(e.clientX-r.left)*sx,my=(e.clientY-r.top)*sy;
+    return mapCityHits.find(c=>Math.hypot(c.cx-mx,c.cy-my)<22);
+  }
+  cvs.addEventListener('mousemove',e=>{cvs.style.cursor=cityAt(e)?'pointer':'crosshair';});
+  cvs.addEventListener('click',e=>{
+    const h=cityAt(e);
+    if(h){document.getElementById('ti').value=h.brg;sendGotoVal(h.brg,h.name);}
+  });
+})();
 rndPre();drawCompass(0,-1);pollStatus();setInterval(pollStatus,500);
 setInterval(()=>{
   const t=new Date();
@@ -1254,6 +1296,13 @@ void handleTimeCCW() {
 //  Setup
 // =============================================================================
 void setup() {
+    // SAFETY FIRST — de-energise relay outputs before anything else.
+    // digitalWrite before pinMode pre-stages the output latch so the pin
+    // comes up HIGH (relay OFF) the instant pinMode sets it to OUTPUT,
+    // eliminating any brief LOW glitch that could pulse the relay on boot.
+    digitalWrite(PIN_MOTOR_CW,  HIGH);
+    digitalWrite(PIN_MOTOR_CCW, HIGH);
+
     // Relay inrush current can briefly dip the rail below the ESP32 brownout
     // threshold (~2.43 V), causing a spurious reset.  Safe to disable on USB power.
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
@@ -1286,17 +1335,28 @@ void setup() {
 
     // Load calibration and last known heading from NVS (survives reboots)
     prefs.begin("rotator", false);
+    prefsReady = true;
     MS_PER_DEG = prefs.getFloat("msperdeg",  163.0f);
     HDG_MIN    = prefs.getFloat("hdgmin",    0.0f);
     HDG_MAX    = prefs.getFloat("hdgmax",    360.0f);
     DEADBAND   = prefs.getFloat("deadband",  4.0f);
     HDG_OFFSET = prefs.getFloat("hdgoffset", 0.0f);
     if (prefs.getBool("hdgknown", false)) {
-        currentHeading = prefs.getFloat("lastheading", 0.0f);
-        motorStartHdg  = currentHeading;
-        headingKnown   = true;
-        hdgRestored    = true;
-        Serial.printf("NVS: heading restored to %.1f deg\n", currentHeading);
+        if (prefs.getBool("motordirty", false)) {
+            // Motor was running when power was lost — restored heading is unreliable.
+            // Invalidate it and require user to re-home before GOTO is re-enabled.
+            prefs.putBool("hdgknown",   false);
+            prefs.putBool("motordirty", false);
+            Serial.println(F("WARN: Rebooted mid-rotation — heading invalidated. Run TIMECCW+STOP to re-home."));
+        } else {
+            currentHeading = prefs.getFloat("lastheading", 0.0f);
+            motorStartHdg  = currentHeading;
+            headingKnown   = true;
+            hdgRestored    = true;
+            Serial.printf("NVS: heading restored to %.1f deg\n", currentHeading);
+        }
+    } else {
+        prefs.putBool("motordirty", false);  // clear any stale dirty flag
     }
     Serial.printf("NVS: MSPERDEG=%.1f  MIN=%.1f  MAX=%.1f  DB=%.1f\n",
                   MS_PER_DEG, HDG_MIN, HDG_MAX, DEADBAND);
