@@ -1,0 +1,1098 @@
+<!DOCTYPE html>
+<!-- HELIOS AZ-CTRL — EMBEDDED WIFI UI CONCEPT 2100
+     Template only. Polls /api/status at 500ms — identical API as current embedded UI.
+     Must be minified (e.g. html-minifier) before embedding in main.cpp INDEX_HTML[]. -->
+<html lang="en"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>NL-01 · HELIOS AZ-CTRL</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════════════
+   DESIGN TOKENS
+═══════════════════════════════════════════════════════════════════════════ */
+:root{
+  --bg:   #030c1a;
+  --surf: #060f22;
+  --pan:  #060e20;
+  --dim:  #0f2038;
+  --fg:   #b8d8f0;
+  --mut:  #2a4a68;
+  --sub:  #152035;
+  /* Cyan — primary accent */
+  --c:    #00e5ff;
+  --c2:   rgba(0,229,255,0.6);
+  --c3:   rgba(0,229,255,0.22);
+  --c4:   rgba(0,229,255,0.07);
+  /* Purple */
+  --p:    #c000ff;
+  --p2:   rgba(192,0,255,0.5);
+  --p3:   rgba(192,0,255,0.2);
+  /* Green */
+  --g:    #00ff88;
+  --g2:   rgba(0,255,136,0.5);
+  /* Red */
+  --r:    #ff2055;
+  --r2:   rgba(255,32,85,0.5);
+  /* Orange */
+  --o:    #ff9800;
+  --o2:   rgba(255,152,0,0.5);
+  /* Yellow */
+  --y:    #ffe040;
+  /* Borders */
+  --b1:   rgba(0,229,255,0.2);
+  --b2:   rgba(0,229,255,0.07);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   RESET + BASE
+═══════════════════════════════════════════════════════════════════════════ */
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{
+  background:var(--bg);
+  color:var(--fg);
+  font-family:'Courier New',Courier,monospace;
+  font-size:12px;
+  display:flex;
+  flex-direction:column;
+}
+
+/* ── Animated grid background ──────────────────────────────────────────── */
+body::before{
+  content:'';
+  position:fixed;inset:0;
+  background-image:
+    linear-gradient(var(--c4) 1px,transparent 1px),
+    linear-gradient(90deg,var(--c4) 1px,transparent 1px);
+  background-size:40px 40px;
+  animation:grid-drift 24s linear infinite;
+  pointer-events:none;
+  z-index:0;
+}
+@keyframes grid-drift{
+  from{background-position:0 0}
+  to  {background-position:40px 40px}
+}
+
+/* ── Scanlines ─────────────────────────────────────────────────────────── */
+body::after{
+  content:'';
+  position:fixed;inset:0;
+  background:repeating-linear-gradient(
+    0deg,
+    transparent,transparent 2px,
+    rgba(0,0,0,0.1) 2px,rgba(0,0,0,0.1) 4px
+  );
+  pointer-events:none;
+  z-index:9999;
+}
+/* Everything above the background */
+#hdr,#rb,#main,#pmask{position:relative;z-index:1}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   HEADER
+═══════════════════════════════════════════════════════════════════════════ */
+#hdr{
+  flex:none;
+  background:var(--surf);
+  height:44px;
+  padding:0 12px;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  border-bottom:1px solid var(--b1);
+  box-shadow:0 0 30px rgba(0,0,0,0.6),0 1px 0 var(--b2);
+}
+.hdr-logo{display:flex;align-items:center;gap:8px;flex:none}
+.hdr-icon{
+  width:28px;height:28px;
+  border:1px solid var(--c3);
+  border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  color:var(--c);font-size:14px;
+  box-shadow:0 0 8px var(--c2),inset 0 0 8px rgba(0,229,255,0.06);
+  animation:icon-pulse 3s ease-in-out infinite;
+}
+@keyframes icon-pulse{
+  0%,100%{box-shadow:0 0 6px var(--c2),inset 0 0 6px rgba(0,229,255,0.05)}
+  50%    {box-shadow:0 0 16px var(--c2),inset 0 0 12px rgba(0,229,255,0.1)}
+}
+.hdr-name{
+  font-size:13px;font-weight:bold;
+  color:var(--c);letter-spacing:2px;
+  text-shadow:0 0 12px var(--c2);
+  text-transform:uppercase;
+}
+.hdr-sub{
+  font-size:9px;color:var(--mut);letter-spacing:1.5px;
+  display:block;margin-top:1px;text-transform:uppercase;
+}
+.hdr-div{width:1px;height:22px;background:var(--b1);flex:none}
+#sts2{flex:none}
+.hdr-space{flex:1}
+.hdr-meta{display:flex;align-items:center;gap:14px;font-size:10px}
+.hdr-meta .gref{color:var(--c3);letter-spacing:1px}
+#hdr-time{
+  color:var(--c);font-size:12px;letter-spacing:2px;
+  text-shadow:0 0 10px var(--c2);
+  font-variant-numeric:tabular-nums;
+  min-width:72px;text-align:right;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   STATUS BADGES
+═══════════════════════════════════════════════════════════════════════════ */
+.badge{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:2px 9px;
+  font-size:10px;letter-spacing:1.5px;text-transform:uppercase;
+  border:1px solid transparent;
+}
+.badge::before{content:'';width:5px;height:5px;border-radius:50%;flex:none}
+.IDLE,.AT_TARGET{
+  color:var(--g);border-color:rgba(0,255,136,0.3);
+  background:rgba(0,255,136,0.05);
+}
+.IDLE::before,.AT_TARGET::before{background:var(--g);box-shadow:0 0 5px var(--g2)}
+.ROTATING_CW,.ROTATING_CCW{
+  color:var(--o);border-color:rgba(255,152,0,0.35);
+  background:rgba(255,152,0,0.06);
+  animation:badge-pulse .55s ease-in-out infinite alternate;
+}
+.ROTATING_CW::before,.ROTATING_CCW::before{background:var(--o);box-shadow:0 0 6px var(--o2)}
+.LIMIT_HIT{
+  color:var(--r);border-color:rgba(255,32,85,0.4);
+  background:rgba(255,32,85,0.07);
+  animation:badge-flash .4s step-end infinite;
+}
+.LIMIT_HIT::before{background:var(--r);box-shadow:0 0 6px var(--r2)}
+@keyframes badge-pulse{from{opacity:.6}to{opacity:1}}
+@keyframes badge-flash{0%,100%{opacity:1}50%{opacity:.2}}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   RESTORE BANNER
+═══════════════════════════════════════════════════════════════════════════ */
+#rb{
+  flex:none;
+  background:rgba(35,18,0,0.95);
+  border-bottom:1px solid rgba(255,152,0,0.45);
+  color:var(--o);
+  padding:5px 12px;
+  font-size:10px;
+  display:none;
+  justify-content:space-between;align-items:center;
+  letter-spacing:1px;text-transform:uppercase;
+  animation:rb-blink 1.4s step-end infinite;
+}
+#rb button{background:none;border:none;color:var(--o);cursor:pointer;font-size:14px;padding:0 3px}
+@keyframes rb-blink{0%,100%{opacity:1}50%{opacity:.55}}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MAIN LAYOUT
+═══════════════════════════════════════════════════════════════════════════ */
+#main{
+  flex:1;
+  display:flex;
+  gap:4px;
+  padding:5px;
+  overflow:hidden;
+  min-height:0;
+}
+
+/* ── Panel base (corner-bracket decorator) ─────────────────────────────── */
+.pn{
+  background:var(--pan);
+  border:1px solid var(--b1);
+  position:relative;
+  padding:8px;
+  display:flex;flex-direction:column;gap:5px;
+  overflow:hidden;
+  box-shadow:0 0 30px rgba(0,0,0,0.5),inset 0 0 50px rgba(0,0,0,0.25);
+}
+.pn::before,.pn::after{
+  content:'';position:absolute;
+  width:10px;height:10px;
+  border-color:var(--c);border-style:solid;
+  opacity:.45;pointer-events:none;
+}
+.pn::before{top:3px;left:3px;border-width:1.5px 0 0 1.5px}
+.pn::after {bottom:3px;right:3px;border-width:0 1.5px 1.5px 0}
+#pL{flex:none;width:210px}
+#pR{flex:1;min-width:0;overflow-y:auto}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   COMPASS
+═══════════════════════════════════════════════════════════════════════════ */
+.cmp-wrap{
+  position:relative;
+  width:190px;height:190px;
+  margin:0 auto;
+}
+.cmp-wrap canvas{
+  display:block;cursor:crosshair;
+  position:relative;z-index:2;
+}
+/* Animated outer bezel rings */
+.ring{
+  position:absolute;
+  border-radius:50%;
+  border:2px solid transparent;
+  pointer-events:none;
+  z-index:3;
+}
+.ring-a{
+  inset:-5px;
+  border-top-color:rgba(0,229,255,0.7);
+  border-right-color:rgba(0,229,255,0.2);
+  animation:spin-cw 10s linear infinite;
+}
+.ring-b{
+  inset:1px;
+  border:1px solid transparent;
+  border-bottom-color:rgba(192,0,255,0.55);
+  border-left-color:rgba(192,0,255,0.18);
+  animation:spin-ccw 7s linear infinite;
+}
+.ring-c{
+  inset:6px;
+  border:1px dashed transparent;
+  border-top-color:rgba(0,229,255,0.12);
+  animation:spin-cw 45s linear infinite;
+}
+@keyframes spin-cw {from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+@keyframes spin-ccw{from{transform:rotate(0deg)}to{transform:rotate(-360deg)}}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BEARING DISPLAY
+═══════════════════════════════════════════════════════════════════════════ */
+.hdg-panel{
+  text-align:center;
+  border:1px solid var(--b1);
+  background:rgba(0,229,255,0.025);
+  position:relative;overflow:hidden;
+  padding:5px 0 4px;
+}
+.hdg-panel::before{
+  content:'';
+  position:absolute;bottom:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--c3),transparent);
+}
+.hdg-label{
+  font-size:8px;color:var(--mut);
+  letter-spacing:3px;text-transform:uppercase;
+  margin-bottom:1px;
+}
+.hdg-big{
+  font-size:34px;font-weight:bold;
+  color:var(--c);letter-spacing:-2px;line-height:1;
+  text-shadow:0 0 22px var(--c2),0 0 44px rgba(0,229,255,0.12);
+  font-variant-numeric:tabular-nums;
+}
+.hdg-unit{font-size:16px;color:var(--c3);letter-spacing:0}
+.tgt-strip{
+  display:flex;justify-content:space-between;align-items:center;
+  margin-top:4px;padding:0 8px;
+  font-size:10px;color:var(--mut);letter-spacing:1px;
+}
+.tgt-strip .tv{
+  color:var(--c);font-size:13px;font-weight:bold;letter-spacing:0;
+  text-shadow:0 0 8px var(--c2);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   RELAY INDICATORS
+═══════════════════════════════════════════════════════════════════════════ */
+.rl-row{display:flex;gap:4px}
+.rl{
+  flex:1;border:1px solid var(--mut);
+  padding:4px 3px;text-align:center;
+  font-size:10px;letter-spacing:1px;text-transform:uppercase;
+  line-height:1.7;color:var(--mut);
+  background:rgba(0,0,0,0.2);
+  transition:all .2s;
+}
+.rl b{display:block;font-size:11px}
+.rl.on{
+  border-color:var(--r);color:var(--o);
+  background:rgba(255,32,85,0.07);
+  box-shadow:0 0 8px var(--r2),inset 0 0 6px rgba(255,32,85,0.08);
+  text-shadow:0 0 6px var(--r);
+  animation:relay-pulse .6s ease-in-out infinite alternate;
+}
+.rl.on b{color:var(--r)}
+@keyframes relay-pulse{from{opacity:.8}to{opacity:1}}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SECTION LABELS
+═══════════════════════════════════════════════════════════════════════════ */
+.sec{
+  font-size:9px;color:var(--c3);
+  letter-spacing:3px;text-transform:uppercase;
+  margin:3px 0 1px;padding-bottom:2px;
+  border-bottom:1px solid var(--b2);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TARGET INPUT
+═══════════════════════════════════════════════════════════════════════════ */
+input[type=number]{
+  width:100%;
+  padding:6px 8px;
+  background:rgba(0,229,255,0.03);
+  border:none;
+  border-bottom:1px solid var(--b1);
+  border-top:1px solid var(--b2);
+  color:var(--c);
+  font-size:22px;
+  font-family:'Courier New',monospace;
+  text-align:center;
+  letter-spacing:3px;font-weight:bold;
+  text-shadow:0 0 10px var(--c2);
+  outline:none;
+}
+input[type=number]:focus{
+  border-bottom-color:var(--c);
+  box-shadow:0 4px 16px rgba(0,229,255,0.1);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CONTROL BUTTONS
+═══════════════════════════════════════════════════════════════════════════ */
+.br{display:flex;gap:3px;margin-top:2px}
+button{
+  flex:1;
+  padding:7px 3px;
+  background:var(--surf);
+  border:1px solid var(--sub);
+  color:var(--fg);
+  font-size:10px;
+  font-family:'Courier New',monospace;
+  letter-spacing:1px;text-transform:uppercase;
+  cursor:pointer;white-space:nowrap;
+  clip-path:polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px);
+  transition:background .12s,box-shadow .12s,color .12s;
+}
+button:hover:not(:disabled){background:var(--dim)}
+button:active:not(:disabled){filter:brightness(.8)}
+#bGo{border-color:var(--c3);color:var(--c);text-shadow:0 0 6px var(--c2)}
+#bGo:hover:not(:disabled){background:rgba(0,229,255,0.1);box-shadow:0 0 12px rgba(0,229,255,0.22)}
+#bSt{border-color:rgba(255,32,85,0.4);color:var(--r);text-shadow:0 0 6px var(--r2)}
+#bSt:hover:not(:disabled){background:rgba(255,32,85,0.1);box-shadow:0 0 12px rgba(255,32,85,0.22)}
+#bHm{border-color:rgba(0,255,136,0.3);color:var(--g);text-shadow:0 0 5px var(--g2)}
+#bHm:hover:not(:disabled){background:rgba(0,255,136,0.07);box-shadow:0 0 10px rgba(0,255,136,0.18)}
+#bCW,#bCC{border-color:var(--p3);color:var(--p);text-shadow:0 0 5px var(--p2)}
+#bCW:hover:not(:disabled),#bCC:hover:not(:disabled){background:rgba(192,0,255,0.07);box-shadow:0 0 10px var(--p3)}
+#bTC,#bTCC{border-color:rgba(255,152,0,0.3);color:var(--o);text-shadow:0 0 5px var(--o2)}
+#bTC:hover:not(:disabled),#bTCC:hover:not(:disabled){background:rgba(255,152,0,0.07)}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PRESETS
+═══════════════════════════════════════════════════════════════════════════ */
+.pre-row{display:grid;grid-template-columns:repeat(4,1fr);gap:3px;margin-top:3px}
+.pre{
+  border:1px solid var(--mut);padding:3px 2px;cursor:pointer;
+  font-size:10px;background:rgba(0,0,0,0.2);color:var(--mut);
+  min-height:32px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  text-transform:uppercase;letter-spacing:1px;
+  transition:border-color .15s;
+}
+.pre:hover{border-color:var(--c3)}
+.ps{
+  color:var(--fg);border-color:var(--b1);background:var(--surf);
+  flex-direction:row;justify-content:space-between;padding:2px 4px;
+}
+.ps:hover{border-color:var(--c);box-shadow:0 0 8px rgba(0,229,255,0.18)}
+.ps .pd{text-align:left;line-height:1.4}
+.ps .pd b{display:block;color:var(--c);font-size:10px;text-shadow:0 0 5px var(--c2)}
+.ps .pe{font-size:11px;color:var(--mut);cursor:pointer;padding:0 2px;flex:none}
+.ps .pe:hover{color:var(--c)}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   AREA MAP
+═══════════════════════════════════════════════════════════════════════════ */
+#mapWrap{
+  display:none;flex:none;overflow:hidden;position:relative;
+  margin-bottom:3px;border:1px solid var(--b1);
+  box-shadow:0 0 12px rgba(0,229,255,0.06);
+}
+#mapWrap img{
+  width:100%;height:auto;display:block;
+  filter:sepia(0.3) saturate(0.45) brightness(0.55) hue-rotate(185deg);
+}
+#mapCvs{position:absolute;top:0;left:0;width:100%;height:100%;cursor:crosshair}
+.lb{
+  padding:1px 8px;font-size:9px;
+  background:var(--surf);color:var(--mut);
+  border:1px solid var(--b2);cursor:pointer;
+  font-family:'Courier New',monospace;letter-spacing:1px;text-transform:uppercase;
+  clip-path:none;
+}
+.lb:hover{color:var(--fg);border-color:var(--c3)}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DIAGNOSTICS / TELEMETRY
+═══════════════════════════════════════════════════════════════════════════ */
+.dg{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0 4px}
+.di{
+  padding:2px 0;
+  border-bottom:1px solid var(--b2);
+  font-size:10px;
+  display:flex;justify-content:space-between;align-items:center;
+  letter-spacing:.5px;
+}
+.di span:first-child{color:var(--mut);text-transform:uppercase;font-size:9px}
+.dv{color:var(--c);text-shadow:0 0 5px var(--c2)}
+.ok{color:var(--g)!important;text-shadow:0 0 5px var(--g2)!important}
+.wn{color:var(--o)!important}
+.er{color:var(--r)!important;text-shadow:0 0 5px var(--r2)!important}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   COMM LOG
+═══════════════════════════════════════════════════════════════════════════ */
+#log{
+  flex:none;
+  height:140px;
+  background:rgba(0,0,0,0.4);
+  border:1px solid var(--b2);
+  padding:5px 6px;
+  overflow-y:auto;
+  font-size:10px;color:var(--mut);letter-spacing:.5px;
+}
+#log p{margin:0;line-height:1.6}
+.cl{color:var(--g)}
+.er2{color:var(--r);text-shadow:0 0 5px var(--r2)}
+/* Blinking cursor on last log line */
+#log p:last-child::after{
+  content:'\25AE';
+  animation:blink-cur .8s step-end infinite;
+  color:var(--c);
+}
+@keyframes blink-cur{0%,100%{opacity:1}50%{opacity:0}}
+.lbar{display:flex;justify-content:space-between;align-items:center;flex:none}
+
+/* ── Command input ────────────────────────────────────────────────────── */
+.cr{display:flex;gap:3px;margin-top:3px;flex:none}
+.cr input{
+  flex:1;padding:4px 6px;
+  background:rgba(0,0,0,0.35);
+  border:1px solid var(--b2);
+  border-left:2px solid var(--c3);
+  color:var(--g);
+  font-size:11px;font-family:'Courier New',monospace;letter-spacing:.5px;
+  outline:none;
+}
+.cr input:focus{border-left-color:var(--c);box-shadow:inset 2px 0 10px rgba(0,229,255,0.08)}
+.cr input::placeholder{color:var(--mut)}
+.cr button{
+  flex:none;padding:4px 12px;
+  background:rgba(0,229,255,0.07);
+  border:1px solid var(--c3);color:var(--c);
+  font-size:10px;letter-spacing:2px;text-transform:uppercase;
+  cursor:pointer;font-family:'Courier New',monospace;
+  text-shadow:0 0 5px var(--c2);clip-path:none;
+}
+.cr button:hover{background:rgba(0,229,255,0.16);box-shadow:0 0 10px rgba(0,229,255,0.22)}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PRESET EDITOR MODAL
+═══════════════════════════════════════════════════════════════════════════ */
+#pmask{
+  display:none;position:fixed;inset:0;
+  background:rgba(3,12,26,0.92);
+  backdrop-filter:blur(4px);
+  z-index:999;align-items:center;justify-content:center;
+}
+#pmask.vis{display:flex}
+#pmod{
+  background:var(--pan);
+  border:1px solid var(--b1);
+  box-shadow:0 0 50px rgba(0,229,255,0.18),inset 0 0 60px rgba(0,0,0,0.5);
+  padding:14px 16px;min-width:232px;
+  position:relative;
+}
+#pmod::before,#pmod::after{
+  content:'';position:absolute;width:12px;height:12px;
+  border-color:var(--c);border-style:solid;
+}
+#pmod::before{top:4px;left:4px;border-width:2px 0 0 2px}
+#pmod::after {bottom:4px;right:4px;border-width:0 2px 2px 0}
+#pmod .sec{margin:0 0 8px;font-size:10px}
+#pmod label{
+  display:block;color:var(--mut);font-size:9px;
+  letter-spacing:2px;text-transform:uppercase;
+  margin-bottom:2px;margin-top:8px;
+}
+#pmod input[type=text],#pmod input[type=number]{
+  width:100%;padding:5px 7px;
+  background:rgba(0,0,0,0.3);border:1px solid var(--b1);
+  color:var(--c);font-size:16px;font-family:'Courier New',monospace;
+  letter-spacing:2px;
+}
+#pmod input:focus{outline:none;border-color:var(--c);box-shadow:0 0 10px rgba(0,229,255,0.22)}
+.pmbr{display:flex;gap:4px;margin-top:12px}
+#pmOk{
+  flex:1;background:rgba(0,229,255,0.08);color:var(--c);
+  border:1px solid var(--c3);font-size:10px;padding:7px;
+  letter-spacing:2px;text-transform:uppercase;cursor:pointer;
+  font-family:'Courier New',monospace;text-shadow:0 0 6px var(--c2);clip-path:none;
+}
+#pmOk:hover{background:rgba(0,229,255,0.18);box-shadow:0 0 12px rgba(0,229,255,0.28)}
+#pmCn{
+  flex:none;background:transparent;color:var(--r);
+  border:1px solid rgba(255,32,85,0.38);font-size:10px;
+  padding:7px 12px;letter-spacing:2px;text-transform:uppercase;
+  cursor:pointer;font-family:'Courier New',monospace;clip-path:none;
+}
+#pmCn:hover{background:rgba(255,32,85,0.08)}
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────── */
+::-webkit-scrollbar{width:4px;background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--b1)}
+::-webkit-scrollbar-thumb:hover{background:var(--c3)}
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     HEADER
+════════════════════════════════════════════════════════════════════════ -->
+<div id="hdr">
+  <div class="hdr-logo">
+    <div class="hdr-icon">⊙</div>
+    <div>
+      <div class="hdr-name">HELIOS AZ-CTRL</div>
+      <span class="hdr-sub">NL-01 · OpenRotator</span>
+    </div>
+  </div>
+  <div class="hdr-div"></div>
+  <span id="sts2"><span class="badge IDLE">IDLE</span></span>
+  <div class="hdr-space"></div>
+  <div class="hdr-meta">
+    <span class="gref">EM77EB &nbsp;·&nbsp; 38.032°N 85.347°W</span>
+    <span id="hdr-time">00:00:00Z</span>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     RESTORE BANNER
+════════════════════════════════════════════════════════════════════════ -->
+<div id="rb">
+  ⚠ [WARN] HEADING RESTORED FROM NVS — VERIFY ANTENNA POSITION BEFORE GOTO
+  <button onclick="dismissRb()">✕</button>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     MAIN
+════════════════════════════════════════════════════════════════════════ -->
+<div id="main">
+
+  <!-- ── Left: compass + status ─────────────────────────────────────── -->
+  <div class="pn" id="pL">
+
+    <!-- Compass with rotating bezel rings -->
+    <div class="cmp-wrap">
+      <div class="ring ring-a"></div>
+      <div class="ring ring-b"></div>
+      <div class="ring ring-c"></div>
+      <canvas id="cmp" width="190" height="190" title="Tap to set target heading"></canvas>
+    </div>
+
+    <!-- Relay indicators -->
+    <div class="rl-row">
+      <div class="rl off" id="rA">CW<b id="rAs">OFF</b></div>
+      <div class="rl off" id="rB">CCW<b id="rBs">OFF</b></div>
+    </div>
+
+    <!-- Bearing / target readout -->
+    <div class="hdg-panel">
+      <div class="hdg-label">// Bearing</div>
+      <div>
+        <span class="hdg-big" id="hdg">---</span><span class="hdg-unit">°</span>
+      </div>
+      <div class="tgt-strip">
+        <span>Target</span>
+        <span class="tv" id="tgt">---°</span>
+      </div>
+    </div>
+
+  </div><!-- /#pL -->
+
+  <!-- ── Right: controls ───────────────────────────────────────────── -->
+  <div class="pn" id="pR">
+
+    <div class="sec">// Navigate</div>
+    <input type="number" id="ti" value="180" min="0" max="360">
+    <div class="br">
+      <button id="bGo"  onclick="sendGotoVal(-1)">GOTO</button>
+      <button id="bSt"  onclick="doStop()">STOP</button>
+      <button id="bHm"  onclick="doSethome()">HOME</button>
+    </div>
+    <div class="br" style="margin-top:3px">
+      <button id="bCW"  onclick="doCW()">◀ CW</button>
+      <button id="bCC"  onclick="doCCW()">CCW ▶</button>
+      <button id="bTC"  onclick="doPost('/api/timecw','TIMECW')">⏱ T-CW</button>
+      <button id="bTCC" onclick="doPost('/api/timeccw','TIMECCW')">⏱ T-CCW</button>
+    </div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin:3px 0 1px;padding-bottom:2px;border-bottom:1px solid var(--b2)">
+      <span class="sec" style="margin:0;border:none;padding:0">// Bearings</span>
+      <span style="font-size:8px;color:var(--mut);letter-spacing:.5px">tap=goto &nbsp;✎=edit</span>
+    </div>
+    <div class="pre-row" id="prs"></div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin:3px 0 1px;padding-bottom:2px;border-bottom:1px solid var(--b2);flex:none">
+      <span class="sec" style="margin:0;border:none;padding:0">// Area Map</span>
+      <button class="lb" id="btnMapTog" onclick="toggleMap()">Show</button>
+    </div>
+    <div id="mapWrap">
+      <img id="mapImg"
+        src="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox=-87.5%2C36.5%2C-83.2%2C40.0&bboxSR=4326&size=900%2C560&format=png&f=image"
+        alt="Area map" onload="drawMapOverlay()">
+      <canvas id="mapCvs"></canvas>
+    </div>
+
+    <div class="sec">// Telemetry</div>
+    <div class="dg">
+      <div class="di"><span>Runtime</span><span class="dv" id="dRt">0ms</span></div>
+      <div class="di"><span>Uptime</span><span class="dv" id="dUp">---</span></div>
+      <div class="di"><span>MS/Deg</span><span class="dv" id="dMd">---</span></div>
+      <div class="di"><span>Deadband</span><span class="dv" id="dDb">---</span></div>
+      <div class="di"><span>Known</span><span class="dv er" id="dKn">NO</span></div>
+      <div class="di"><span>Timing</span><span class="dv" id="dTm">OFF</span></div>
+      <div class="di"><span>Min</span><span class="dv" id="dMn">0°</span></div>
+      <div class="di"><span>Max</span><span class="dv" id="dMx">360°</span></div>
+    </div>
+
+    <div class="lbar" style="margin-top:5px">
+      <span class="sec" style="margin:0;border:none;padding:0">// Console</span>
+      <button class="lb" onclick="cl()">CLR</button>
+    </div>
+    <div id="log"></div>
+    <div class="cr">
+      <input id="ci" placeholder="GOTO 180 | SETWIFI ssid pass | FACTORY | HELP"
+             onkeydown="ok(event)">
+      <button onclick="dc()">TX</button>
+    </div>
+
+  </div><!-- /#pR -->
+</div><!-- /#main -->
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     PRESET EDITOR MODAL
+════════════════════════════════════════════════════════════════════════ -->
+<div id="pmask">
+  <div id="pmod">
+    <div class="sec">// Edit Preset</div>
+    <label>Label (6 chars max)</label>
+    <input type="text" id="pmLbl" maxlength="6" autocomplete="off">
+    <label>Heading (0 – 360°)</label>
+    <input type="number" id="pmDeg" min="0" max="360">
+    <div class="pmbr">
+      <button id="pmOk" onclick="pmSave()">SAVE</button>
+      <button id="pmCn" onclick="pmClose()">CANCEL</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════════════════════
+//  COMPASS — canvas 190×190, polar geometry
+// ════════════════════════════════════════════════════════════════════════════
+const W=190,CX=95,CY=95,R=86;
+let heading=0,target=-1,hdgMin=0,hdgMax=360;
+let displayHeading=0,animId=null;
+let cmdHist=[],cmdIdx=-1,restoredDismissed=false;
+let mapOpen=false,mapCityHits=[];
+
+// QTH: 847 Townhill Rd, Taylorsville KY 40071
+const MAP_LAT=38.0344609,MAP_LON=-85.3316739;
+const MAP_W=-87.5,MAP_E=-83.2,MAP_S=36.5,MAP_N=40.0;
+const MAP_CITIES=[
+  ['Louisville',38.2527,-85.7585],['Lexington',38.0406,-84.5037],
+  ['Frankfort',38.2009,-84.8733],['Cincinnati',39.1031,-84.5120],
+  ["E'town",37.6937,-85.8591],['Bardstown',37.8137,-85.4669],
+  ['Shelbyville',38.2115,-85.2238],['Lawrenceburg',38.037,-84.899],
+  ['Bowling Green',36.9903,-86.4436],['Indianapolis',39.7684,-86.1581],
+];
+
+function drawCompass(h,t){
+  const c=document.getElementById('cmp').getContext('2d');
+  c.clearRect(0,0,W,W);
+
+  // Deep space face — radial gradient
+  const bg=c.createRadialGradient(CX,CY,0,CX,CY,R);
+  bg.addColorStop(0,'#080e1e');
+  bg.addColorStop(0.75,'#050b18');
+  bg.addColorStop(1,'#020810');
+  c.beginPath();c.arc(CX,CY,R,0,Math.PI*2);
+  c.fillStyle=bg;c.fill();
+
+  // Outer glow ring
+  c.beginPath();c.arc(CX,CY,R,0,Math.PI*2);
+  c.strokeStyle='rgba(0,229,255,0.3)';c.lineWidth=2;c.stroke();
+  c.beginPath();c.arc(CX,CY,R-3,0,Math.PI*2);
+  c.strokeStyle='rgba(0,229,255,0.07)';c.lineWidth=6;c.stroke();
+
+  // Travel-limit shading
+  if(hdgMax-hdgMin<355){
+    const sa=((hdgMax-90+720)%360)*Math.PI/180;
+    const ea=((hdgMin-90+720)%360)*Math.PI/180;
+    c.beginPath();c.moveTo(CX,CY);c.arc(CX,CY,R-1,sa,ea);c.closePath();
+    c.fillStyle='rgba(3,8,18,0.6)';c.fill();
+    [hdgMin,hdgMax].forEach(d=>{
+      const a=(d-90)*Math.PI/180;
+      c.beginPath();
+      c.moveTo(CX+72*Math.cos(a),CY+72*Math.sin(a));
+      c.lineTo(CX+84*Math.cos(a),CY+84*Math.sin(a));
+      c.strokeStyle='rgba(255,152,0,0.85)';c.lineWidth=2.5;c.stroke();
+    });
+  }
+
+  // Sweep arc — heading → target
+  if(t>=0&&Math.abs(h-t)>0.5){
+    const sA=(h-90)*Math.PI/180,eA=(t-90)*Math.PI/180;
+    c.beginPath();c.arc(CX,CY,74,sA,eA,t<h);
+    c.strokeStyle='rgba(0,229,255,0.45)';
+    c.lineWidth=7;
+    c.shadowColor='rgba(0,229,255,0.55)';c.shadowBlur=12;
+    c.stroke();c.shadowBlur=0;
+  }
+
+  // Degree tick marks
+  for(let i=0;i<360;i+=5){
+    const a=(i-90)*Math.PI/180;
+    const card=i%90===0,m45=i%45===0,m30=i%30===0;
+    const ir=card?62:m45?68:m30?71:74;
+    c.beginPath();
+    c.moveTo(CX+ir*Math.cos(a),CY+ir*Math.sin(a));
+    c.lineTo(CX+84*Math.cos(a),CY+84*Math.sin(a));
+    c.strokeStyle=card?'rgba(0,229,255,0.7)':m45?'rgba(0,229,255,0.35)':m30?'rgba(0,229,255,0.18)':'rgba(0,229,255,0.08)';
+    c.lineWidth=card?2:m45?1.5:1;
+    c.stroke();
+  }
+
+  // Cardinal + intercardinal labels
+  [['N',0,'#00e5ff',true],['E',90,'rgba(0,229,255,0.52)',false],
+   ['S',180,'rgba(0,229,255,0.45)',false],['W',270,'rgba(0,229,255,0.52)',false]].forEach(([l,d,col,glow])=>{
+    const a=(d-90)*Math.PI/180;
+    c.fillStyle=col;
+    c.font='bold '+(glow?'12':'10')+'px system-ui,sans-serif';
+    c.textAlign='center';c.textBaseline='middle';
+    if(glow){c.shadowColor='rgba(0,229,255,0.85)';c.shadowBlur=10;}
+    c.fillText(l,CX+54*Math.cos(a),CY+54*Math.sin(a));
+    c.shadowBlur=0;
+  });
+  [['NE',45],['SE',135],['SW',225],['NW',315]].forEach(([l,d])=>{
+    const a=(d-90)*Math.PI/180;
+    c.fillStyle='rgba(0,229,255,0.2)';
+    c.font='8px system-ui,sans-serif';
+    c.textAlign='center';c.textBaseline='middle';
+    c.fillText(l,CX+54*Math.cos(a),CY+54*Math.sin(a));
+  });
+
+  // Target line (dashed blue)
+  if(t>=0){
+    const ta=(t-90)*Math.PI/180;
+    c.beginPath();c.moveTo(CX,CY);
+    c.lineTo(CX+R*.84*Math.cos(ta),CY+R*.84*Math.sin(ta));
+    c.strokeStyle='rgba(0,229,255,0.5)';c.lineWidth=1.5;
+    c.setLineDash([4,3]);c.stroke();c.setLineDash([]);
+    // Target dot
+    const tx=CX+R*.84*Math.cos(ta),ty=CY+R*.84*Math.sin(ta);
+    c.beginPath();c.arc(tx,ty,4,0,Math.PI*2);
+    c.fillStyle='rgba(0,229,255,0.95)';
+    c.shadowColor='rgba(0,229,255,0.9)';c.shadowBlur=14;
+    c.fill();c.shadowBlur=0;
+  }
+
+  // Needle tail
+  const na=(h-90)*Math.PI/180;
+  c.beginPath();
+  c.moveTo(CX-18*Math.cos(na),CY-18*Math.sin(na));
+  c.lineTo(CX,CY);
+  c.strokeStyle='rgba(255,32,85,0.22)';c.lineWidth=2;c.stroke();
+
+  // Needle tip — glowing red
+  c.beginPath();c.moveTo(CX,CY);
+  c.lineTo(CX+68*Math.cos(na),CY+68*Math.sin(na));
+  c.strokeStyle='#ff2055';c.lineWidth=2.5;
+  c.shadowColor='rgba(255,32,85,0.9)';c.shadowBlur=16;
+  c.stroke();c.shadowBlur=0;
+
+  // Center hub
+  c.beginPath();c.arc(CX,CY,5,0,Math.PI*2);
+  c.fillStyle='#00e5ff';
+  c.shadowColor='rgba(0,229,255,0.9)';c.shadowBlur=14;
+  c.fill();
+  c.beginPath();c.arc(CX,CY,2.5,0,Math.PI*2);
+  c.fillStyle='#fff';c.shadowBlur=0;c.fill();
+}
+
+function startAnim(){
+  if(animId)return;
+  function step(){
+    const d=heading-displayHeading;
+    if(Math.abs(d)>90){displayHeading=heading;drawCompass(displayHeading,target);drawMapOverlay();animId=null;return;}
+    if(Math.abs(d)>0.2){displayHeading+=d*.14;drawCompass(displayHeading,target);animId=requestAnimationFrame(step);}
+    else{displayHeading=heading;drawCompass(displayHeading,target);drawMapOverlay();animId=null;}
+  }
+  animId=requestAnimationFrame(step);
+}
+
+document.getElementById('cmp').addEventListener('click',e=>{
+  const rect=e.target.getBoundingClientRect(),sc=rect.width/W;
+  let deg=Math.atan2(e.clientY-rect.top-CY*sc,e.clientX-rect.left-CX*sc)*180/Math.PI+90;
+  if(deg<0)deg+=360;
+  deg=Math.min(hdgMax,Math.max(hdgMin,Math.round(deg)%360));
+  document.getElementById('ti').value=deg;
+  sendGotoVal(deg);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  PRESETS
+// ════════════════════════════════════════════════════════════════════════════
+const NP=4;
+function lps(){try{return JSON.parse(localStorage.getItem('rtp')||'[]');}catch{return [];}}
+function sps(a){localStorage.setItem('rtp',JSON.stringify(a));}
+function rndPre(){
+  const ps=lps(),el=document.getElementById('prs');el.innerHTML='';
+  for(let i=0;i<NP;i++){
+    const p=ps[i],d=document.createElement('div');
+    if(p){
+      d.className='pre ps';
+      d.innerHTML='<span class="pd" onclick="gtp('+i+')">'+p.l+'<b>'+p.d+'\u00b0</b></span>'
+                 +'<span class="pe" onclick="stp('+i+')" title="Edit">&#x270E;</span>';
+    }else{
+      d.className='pre';
+      d.innerHTML='<span style="color:var(--mut);text-align:center" onclick="stp('+i+')">'
+                 +'P'+(i+1)+'<b style="display:block;color:var(--sub);font-size:.65rem">+</b></span>';
+    }
+    el.appendChild(d);
+  }
+}
+function gtp(i){const ps=lps();if(ps[i]){document.getElementById('ti').value=ps[i].d;sendGotoVal(ps[i].d,ps[i].l);}}
+function stp(i){
+  const ps=lps(),cur=ps[i];
+  const dv=parseFloat(document.getElementById('ti').value);
+  document.getElementById('pmLbl').value=cur?cur.l:'P'+(i+1);
+  document.getElementById('pmDeg').value=isNaN(dv)?(cur?cur.d:0):Math.round(dv);
+  document.getElementById('pmask')._slot=i;
+  document.getElementById('pmask').classList.add('vis');
+  setTimeout(()=>document.getElementById('pmLbl').select(),50);
+}
+function pmClose(){document.getElementById('pmask').classList.remove('vis');}
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape')pmClose();
+  if(e.key==='Enter'&&document.getElementById('pmask').classList.contains('vis')){e.preventDefault();pmSave();}
+});
+function pmSave(){
+  const i=document.getElementById('pmask')._slot;
+  const ps=lps();
+  const nl=document.getElementById('pmLbl').value.trim().slice(0,6)||('P'+(i+1));
+  const nd=parseInt(document.getElementById('pmDeg').value)||0;
+  ps[i]={l:nl,d:nd};
+  sps(ps);rndPre();pmClose();
+  lg('PRESET '+(i+1)+' SAVED \u2192 '+nl+' / '+nd+'\u00b0','cl');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  AREA MAP
+// ════════════════════════════════════════════════════════════════════════════
+function ll2px(lat,lon,W,H){return[(lon-MAP_W)/(MAP_E-MAP_W)*W,(MAP_N-lat)/(MAP_N-MAP_S)*H];}
+function distMi(a,b,c,d){
+  const R=3958.8,dL=(c-a)*Math.PI/180,dG=(d-b)*Math.PI/180;
+  const x=Math.sin(dL/2)**2+Math.cos(a*Math.PI/180)*Math.cos(c*Math.PI/180)*Math.sin(dG/2)**2;
+  return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
+}
+function bearingDeg(la1,lo1,la2,lo2){
+  const r=Math.PI/180,dL=(lo2-lo1)*r;
+  const x=Math.sin(dL)*Math.cos(la2*r);
+  const y=Math.cos(la1*r)*Math.sin(la2*r)-Math.sin(la1*r)*Math.cos(la2*r)*Math.cos(dL);
+  return(Math.atan2(x,y)*180/Math.PI+360)%360;
+}
+function drawMapOverlay(){
+  if(!mapOpen)return;
+  const img=document.getElementById('mapImg'),cvs=document.getElementById('mapCvs');
+  if(!img||!cvs||!img.complete||!img.naturalWidth)return;
+  const W=img.offsetWidth,H=img.offsetHeight;if(!W||!H)return;
+  cvs.width=W;cvs.height=H;
+  const c=cvs.getContext('2d');c.clearRect(0,0,W,H);
+  const[hx,hy]=ll2px(MAP_LAT,MAP_LON,W,H);
+  const pxMi=H/(MAP_N-MAP_S)/69.0;
+  [50,100,150,200].forEach(mi=>{
+    const r=mi*pxMi;
+    c.beginPath();c.arc(hx,hy,r,0,Math.PI*2);
+    c.strokeStyle='rgba(0,229,255,0.3)';c.lineWidth=1;c.setLineDash([5,4]);c.stroke();c.setLineDash([]);
+    const rx=hx+r*0.707,ry=hy-r*0.707;
+    c.font='bold 9px monospace';c.textAlign='left';c.textBaseline='middle';
+    c.lineWidth=2;c.strokeStyle='rgba(0,0,0,0.8)';c.strokeText(mi+'mi',rx+1,ry+1);
+    c.fillStyle='rgba(0,229,255,0.9)';c.fillText(mi+'mi',rx,ry);
+  });
+  mapCityHits=[];
+  MAP_CITIES.forEach(([name,lat,lon])=>{
+    const[cx,cy]=ll2px(lat,lon,W,H);
+    const d=distMi(MAP_LAT,MAP_LON,lat,lon).toFixed(0)+'mi';
+    const brgNum=Math.round(bearingDeg(MAP_LAT,MAP_LON,lat,lon));
+    mapCityHits.push({name,brg:brgNum,cx,cy});
+    c.beginPath();c.arc(cx,cy,4,0,Math.PI*2);
+    c.fillStyle='#00e5ff';c.fill();c.strokeStyle='#030c1a';c.lineWidth=1.5;c.stroke();
+    c.font='bold 10px monospace';c.textAlign='left';c.textBaseline='bottom';
+    c.lineWidth=3;c.strokeStyle='rgba(0,0,0,0.85)';
+    c.strokeText(name,cx+6,cy);c.fillStyle='#b8d8f0';c.fillText(name,cx+6,cy);
+    c.font='9px monospace';c.lineWidth=2;
+    c.strokeText(brgNum+'\u00b0 / '+d,cx+6,cy+11);c.fillStyle='#ffe040';c.fillText(brgNum+'\u00b0 / '+d,cx+6,cy+11);
+  });
+  const rad=displayHeading*Math.PI/180,blen=Math.hypot(W,H);
+  c.beginPath();c.moveTo(hx,hy);c.lineTo(hx+blen*Math.sin(rad),hy-blen*Math.cos(rad));
+  c.strokeStyle='rgba(255,32,85,0.9)';c.lineWidth=2;c.stroke();
+  const lx=hx+45*Math.sin(rad),ly=hy-45*Math.cos(rad);
+  c.font='bold 12px monospace';c.textAlign='center';c.textBaseline='middle';
+  c.lineWidth=3;c.strokeStyle='rgba(0,0,0,0.9)';
+  const ht=Math.round(displayHeading)+'\u00b0';c.strokeText(ht,lx,ly);
+  c.fillStyle='#ff2055';c.shadowColor='rgba(255,32,85,0.5)';c.shadowBlur=5;c.fillText(ht,lx,ly);c.shadowBlur=0;
+  c.beginPath();c.arc(hx,hy,7,0,Math.PI*2);
+  c.fillStyle='#00e5ff';c.fill();c.strokeStyle='#b8d8f0';c.lineWidth=2;c.stroke();
+  c.beginPath();c.moveTo(hx-13,hy);c.lineTo(hx+13,hy);c.moveTo(hx,hy-13);c.lineTo(hx,hy+13);
+  c.strokeStyle='rgba(0,229,255,0.6)';c.lineWidth=1;c.stroke();
+  c.font='bold 10px monospace';c.textAlign='center';c.textBaseline='bottom';
+  c.lineWidth=2;c.strokeStyle='rgba(0,0,0,0.7)';
+  c.strokeText('N',hx,hy-16);c.fillStyle='#00e5ff';c.fillText('N',hx,hy-16);
+}
+function toggleMap(){
+  mapOpen=!mapOpen;
+  document.getElementById('mapWrap').style.display=mapOpen?'block':'none';
+  document.getElementById('btnMapTog').textContent=mapOpen?'Hide':'Show';
+  if(mapOpen)setTimeout(drawMapOverlay,60);
+}
+(function(){
+  const cvs=document.getElementById('mapCvs');
+  function cityAt(e){
+    const r=cvs.getBoundingClientRect(),sx=cvs.width/r.width,sy=cvs.height/r.height;
+    const mx=(e.clientX-r.left)*sx,my=(e.clientY-r.top)*sy;
+    return mapCityHits.find(c=>Math.hypot(c.cx-mx,c.cy-my)<22);
+  }
+  cvs.addEventListener('mousemove',e=>{cvs.style.cursor=cityAt(e)?'pointer':'crosshair';});
+  cvs.addEventListener('click',e=>{const h=cityAt(e);if(h){document.getElementById('ti').value=h.brg;sendGotoVal(h.brg,h.name);}});
+})();
+
+// ════════════════════════════════════════════════════════════════════════════
+//  UI HELPERS
+// ════════════════════════════════════════════════════════════════════════════
+function dismissRb(){restoredDismissed=true;document.getElementById('rb').style.display='none';}
+function lg(msg,cls){
+  const el=document.getElementById('log'),p=document.createElement('p');
+  if(cls)p.className=cls;
+  const t=new Date();
+  const ts=String(t.getUTCHours()).padStart(2,'0')+String(t.getUTCMinutes()).padStart(2,'0')+'Z';
+  p.textContent=ts+' > '+msg;
+  el.appendChild(p);el.scrollTop=el.scrollHeight;
+  if(el.children.length>80)el.removeChild(el.firstChild);
+}
+function cl(){document.getElementById('log').innerHTML='';}
+function fMs(ms){if(!ms||ms<=0)return '0ms';if(ms<1000)return ms+'ms';if(ms<60000)return(ms/1000).toFixed(1)+'s';return Math.floor(ms/60000)+'m'+(Math.floor(ms/1000)%60)+'s';}
+function fUp(ms){const s=Math.floor(ms/1000),h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sc=s%60;return(h?h+'h ':'')+( m?m+'m ':'')+sc+'s';}
+
+function updDbg(d){
+  const cOn=d.pinCW===0,ccOn=d.pinCCW===0;
+  document.getElementById('rA').className='rl '+(cOn?'on':'off');
+  document.getElementById('rAs').textContent=cOn?'ON':'OFF';
+  document.getElementById('rB').className='rl '+(ccOn?'on':'off');
+  document.getElementById('rBs').textContent=ccOn?'ON':'OFF';
+  document.getElementById('dRt').textContent=fMs(d.motorRunMs||0);
+  document.getElementById('dUp').textContent=fUp(d.uptime||0);
+  document.getElementById('dMd').textContent=(d.msperdeg||0).toFixed(1);
+  document.getElementById('dDb').textContent=(d.deadband||0).toFixed(1)+'\u00b0';
+  const kEl=document.getElementById('dKn');kEl.textContent=d.headingKnown?'YES':'NO';kEl.className='dv '+(d.headingKnown?'ok':'er');
+  const tEl=document.getElementById('dTm');tEl.textContent=d.timingMode?'ON':'OFF';tEl.className='dv '+(d.timingMode?'wn':'');
+  if(d.hdgMin!==undefined){
+    hdgMin=parseFloat(d.hdgMin);hdgMax=parseFloat(d.hdgMax);
+    document.getElementById('dMn').textContent=hdgMin.toFixed(0)+'\u00b0';
+    document.getElementById('dMx').textContent=hdgMax.toFixed(0)+'\u00b0';
+    document.getElementById('ti').min=hdgMin;document.getElementById('ti').max=hdgMax;
+  }
+  const rb=document.getElementById('rb');
+  if(d.hdgRestored&&!restoredDismissed)rb.style.display='flex';
+  else if(!d.hdgRestored){restoredDismissed=false;rb.style.display='none';}
+}
+
+function ok(e){
+  if(e.key==='Enter'){dc();return;}
+  if(e.key==='ArrowUp'){if(!cmdHist.length)return;cmdIdx=Math.min(cmdIdx+1,cmdHist.length-1);document.getElementById('ci').value=cmdHist[cmdIdx];e.preventDefault();}
+  if(e.key==='ArrowDown'){cmdIdx=Math.max(cmdIdx-1,-1);document.getElementById('ci').value=cmdIdx<0?'':cmdHist[cmdIdx];e.preventDefault();}
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  API — identical to current embedded UI
+// ════════════════════════════════════════════════════════════════════════════
+async function api(url,method,body){
+  const o={method:method||'GET'};
+  if(body){o.headers={'Content-Type':'application/json'};o.body=JSON.stringify(body);}
+  return(await fetch(url,o)).json();
+}
+async function pollStatus(){
+  try{
+    const d=await api('/api/status');
+    const hv=d.headingKnown?parseFloat(d.heading):heading;
+    if(!isNaN(hv))heading=hv;
+    target=parseFloat(d.target);startAnim();
+    document.getElementById('hdg').textContent=d.headingKnown?hv.toFixed(1):'---';
+    document.getElementById('tgt').textContent=target>=0?target.toFixed(1)+'\u00b0':'---\u00b0';
+    const st=d.status||'IDLE';
+    document.getElementById('sts2').innerHTML='<span class="badge '+st+'">'+st+'</span>';
+    updDbg(d);
+  }catch(e){}
+}
+async function sendGotoVal(deg,label){
+  if(deg<0){deg=parseFloat(document.getElementById('ti').value);if(isNaN(deg))return;}
+  deg=Math.round(Math.min(hdgMax,Math.max(hdgMin,deg)));
+  const body={heading:deg};if(label)body.label=label;
+  try{const d=await api('/api/goto','POST',body);lg('GOTO '+deg+'\u00b0 \u2192 '+d.result,'cl');}
+  catch(e){lg('GOTO error','er2');}
+}
+async function doStop(){
+  try{
+    const d=await api('/api/stop','POST');
+    let msg='STOP \u2192 '+d.result;
+    if(d.timedMs)msg+=' | '+d.timedMs+'ms for '+d.sweepDeg+'\u00b0 \u2192 MSPERDEG '+d.suggestedMsDeg;
+    lg(msg,'cl');
+  }catch(e){}
+}
+async function doPost(url,label){try{const d=await api(url,'POST');lg(label+' \u2192 '+d.result,'cl');}catch(e){}}
+async function doCW(){
+  try{await api('/api/stop','POST');lg('STOP \u2192 OK','cl');}catch(e){}
+  try{const d=await api('/api/cw','POST');lg('CW \u2192 '+d.result,'cl');}catch(e){}
+}
+async function doCCW(){
+  try{await api('/api/stop','POST');lg('STOP \u2192 OK','cl');}catch(e){}
+  try{const d=await api('/api/ccw','POST');lg('CCW \u2192 '+d.result,'cl');}catch(e){}
+}
+async function doSethome(){
+  const deg=parseInt(document.getElementById('ti').value,10);
+  const val=isNaN(deg)?0:Math.min(hdgMax,Math.max(hdgMin,deg));
+  try{const d=await api('/api/sethome','POST',{heading:val});lg('SETHOME '+val+'\u00b0 \u2192 '+d.result,'cl');}catch(e){}
+}
+async function dc(){
+  const ci=document.getElementById('ci'),cmd=ci.value.trim();if(!cmd)return;
+  ci.value='';cmdHist.unshift(cmd);if(cmdHist.length>50)cmdHist.pop();cmdIdx=-1;
+  try{const d=await api('/api/command','POST',{cmd:cmd});lg('> '+cmd,'cl');lg(d.result);}
+  catch(e){lg('ERR: '+e,'er2');}
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  INIT
+// ════════════════════════════════════════════════════════════════════════════
+rndPre();
+drawCompass(0,-1);
+pollStatus();
+setInterval(pollStatus,500);
+setInterval(()=>{
+  const t=new Date();
+  document.getElementById('hdr-time').textContent=
+    String(t.getUTCHours()).padStart(2,'0')+':'+
+    String(t.getUTCMinutes()).padStart(2,'0')+':'+
+    String(t.getUTCSeconds()).padStart(2,'0')+'Z';
+},1000);
+</script>
+</body>
+</html>
